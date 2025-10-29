@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include <maya/MAnimControl.h>
 #include <maya/MFnMatrixData.h>
 #include <maya/MGlobal.h>
@@ -26,25 +28,26 @@ CameraCache::CameraCache()
 void CameraCache::initialize(const MObject &camera)
 {
     MFnDependencyNode fnCamera(camera);
-    MPlug worldMatrixPlugs = fnCamera.findPlug("worldMatrix");
-    worldMatrixPlugs.evaluateNumElements();
-    worldMatrixPlug = worldMatrixPlugs[0];
-    
+    MStatus status;
+
+    MPlug worldMatrixPlugs = fnCamera.findPlug("worldMatrix", false, &status);
+    worldMatrixPlug = worldMatrixPlugs.elementByLogicalIndex(0, &status);
+
     caching = false;
     initialized = true;
-    
+
     MDagPath dagPath;
     MDagPath::getAPathTo(camera, dagPath);
     dagPath.pop(1);
-    
+
     MFnDependencyNode transformFn(dagPath.node());
-    txPlug = transformFn.findPlug("translateX");
-    tyPlug = transformFn.findPlug("translateY");
-    tzPlug = transformFn.findPlug("translateZ");
-    
-    rxPlug = transformFn.findPlug("rotateX");
-    ryPlug = transformFn.findPlug("rotateY");
-    rzPlug = transformFn.findPlug("rotateZ");
+    txPlug = transformFn.findPlug("translateX", false, &status);
+    tyPlug = transformFn.findPlug("translateY", false, &status);
+    tzPlug = transformFn.findPlug("translateZ", false, &status);
+
+    rxPlug = transformFn.findPlug("rotateX", false, &status);
+    ryPlug = transformFn.findPlug("rotateY", false, &status);
+    rzPlug = transformFn.findPlug("rotateZ", false, &status);
 }
 
 

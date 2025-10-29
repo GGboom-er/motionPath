@@ -1,3 +1,4 @@
+#include "PlatformFixes.h"
 
 #include "Keyframe.h"
 
@@ -55,7 +56,7 @@ void Keyframe::setTangentValue(double value, const Keyframe::Axis &axisName, con
     }
 }
 
-void Keyframe::setTangent(int keyIndex, const MFnAnimCurve &curve, const Keyframe::Axis &axisName, const Keyframe::Tangent &tangentName)
+void Keyframe::setTangent(int keyIndex, MFnAnimCurve &curve, const Keyframe::Axis &axisName, const Keyframe::Tangent &tangentName)
 {
    	double tangentVal = 0.0;
 	if(!curve.isWeighted())

@@ -1,3 +1,4 @@
+#include "PlatformFixes.h"
 
 #include "GlobalSettings.h"
 

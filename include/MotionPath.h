@@ -161,9 +161,9 @@ class MotionPath
         bool isConstrained(const MFnDagNode &dagNodeFn);
         void findParentMatrixPlug(const MObject &transform, const bool isConstrained, MPlug &matrixPlug);
         void findPivotPlugs(MFnDependencyNode &depNodFn);
-        void expandKeyFramesCache(const MFnAnimCurve &curve, const Keyframe::Axis &axisName, bool isTranslate);
-        void cacheKeyFrames(const MFnAnimCurve &curveTX, const MFnAnimCurve &curveTY, const MFnAnimCurve &curveTZ, const MFnAnimCurve &curveRX, const MFnAnimCurve &curveRY, const MFnAnimCurve &curveRZ, CameraCache* cachePtr, const MMatrix &currentCameraMatrix);
-        void setShowInOutTangents(const MFnAnimCurve &curveTX, const MFnAnimCurve &curveTY, const MFnAnimCurve &curveTZ);
+        void expandKeyFramesCache(MFnAnimCurve &curve, const Keyframe::Axis &axisName, bool isTranslate);
+        void cacheKeyFrames(MFnAnimCurve &curveTX, MFnAnimCurve &curveTY, MFnAnimCurve &curveTZ, MFnAnimCurve &curveRX, MFnAnimCurve &curveRY, MFnAnimCurve &curveRZ, CameraCache* cachePtr, const MMatrix &currentCameraMatrix);
+        void setShowInOutTangents(MFnAnimCurve &curveTX, MFnAnimCurve &curveTY, MFnAnimCurve &curveTZ);
         bool showTangent(const double time, const int firstId, const double firstTime, const int secondId, const double secondTime);
     
         void copyKeyFrameFromToOnCurve(MFnAnimCurve &curve, int keyId, double value, double time, MAnimCurveChange *change);

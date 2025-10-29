@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include "MotionPath.h"
 #include "KeyClipboard.h"
 

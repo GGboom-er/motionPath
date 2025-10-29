@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include <QtWidgets/QWidget>
 #include <QtWidgets/QMenu>
 #include <QtCore/QPointer>

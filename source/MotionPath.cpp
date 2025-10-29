@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #define TANGENT_TIME_DELTA 0.01
 
 #include <QtWidgets/QApplication> 
@@ -28,23 +30,25 @@ extern MotionPathManager mpManager;
 MotionPath::MotionPath(const MObject &object)
 {
     thisObject = object;
-    
+
     MFnDependencyNode depNodFn(object);
-    txPlug = depNodFn.findPlug("translateX");
-    tyPlug = depNodFn.findPlug("translateY");
-    tzPlug = depNodFn.findPlug("translateZ");
-    
-    rxPlug = depNodFn.findPlug("rotateX");
-    ryPlug = depNodFn.findPlug("rotateY");
-    rzPlug = depNodFn.findPlug("rotateZ");
-    
-    rpxPlug = depNodFn.findPlug("rotatePivotX");
-    rpyPlug = depNodFn.findPlug("rotatePivotY");
-    rpzPlug = depNodFn.findPlug("rotatePivotZ");
-    
-    rptxPlug = depNodFn.findPlug("rotatePivotTranslateX");
-    rptyPlug = depNodFn.findPlug("rotatePivotTranslateY");
-    rptzPlug = depNodFn.findPlug("rotatePivotTranslateZ");
+    MStatus status;
+
+    txPlug = depNodFn.findPlug("translateX", false, &status);
+    tyPlug = depNodFn.findPlug("translateY", false, &status);
+    tzPlug = depNodFn.findPlug("translateZ", false, &status);
+
+    rxPlug = depNodFn.findPlug("rotateX", false, &status);
+    ryPlug = depNodFn.findPlug("rotateY", false, &status);
+    rzPlug = depNodFn.findPlug("rotateZ", false, &status);
+
+    rpxPlug = depNodFn.findPlug("rotatePivotX", false, &status);
+    rpyPlug = depNodFn.findPlug("rotatePivotY", false, &status);
+    rpzPlug = depNodFn.findPlug("rotatePivotZ", false, &status);
+
+    rptxPlug = depNodFn.findPlug("rotatePivotTranslateX", false, &status);
+    rptyPlug = depNodFn.findPlug("rotatePivotTranslateY", false, &status);
+    rptzPlug = depNodFn.findPlug("rotatePivotTranslateZ", false, &status);
 
     isDrawing = false;
     
@@ -106,13 +110,15 @@ void MotionPath::cacheParentMatrixRange()
 void MotionPath::cacheParentMatrixRangeForWorldCallback(MObject &transformNode)
 {
     MFnDependencyNode depNodFn(transformNode);
-    MPlug txP = depNodFn.findPlug("translateX");
-    MPlug tyP = depNodFn.findPlug("translateY");
-    MPlug tzP = depNodFn.findPlug("translateZ");
-    
-    MPlug rxP = depNodFn.findPlug("rotateX");
-    MPlug ryP = depNodFn.findPlug("rotateY");
-    MPlug rzP = depNodFn.findPlug("rotateZ");
+    MStatus status;
+
+    MPlug txP = depNodFn.findPlug("translateX", false, &status);
+    MPlug tyP = depNodFn.findPlug("translateY", false, &status);
+    MPlug tzP = depNodFn.findPlug("translateZ", false, &status);
+
+    MPlug rxP = depNodFn.findPlug("rotateX", false, &status);
+    MPlug ryP = depNodFn.findPlug("rotateY", false, &status);
+    MPlug rzP = depNodFn.findPlug("rotateZ", false, &status);
     
     MStatus txStatus, tyStatus, tzStatus, rxStatus, ryStatus, rzStatus, sxStatus, syStatus, szStatus;
     MFnAnimCurve cTX(txP, &txStatus);
@@ -222,9 +228,11 @@ void MotionPath::worldMatrixChangedCallback(MObject& transformNode, MDagMessage:
 bool MotionPath::hasAnimationLayers(const MObject &object)
 {
     MFnDependencyNode depNodFn(object);
-    MPlug txPlug = depNodFn.findPlug("translateX");
-    MPlug tyPlug = depNodFn.findPlug("translateY");
-    MPlug tzPlug = depNodFn.findPlug("translateZ");
+    MStatus status;
+
+    MPlug txPlug = depNodFn.findPlug("translateX", false, &status);
+    MPlug tyPlug = depNodFn.findPlug("translateY", false, &status);
+    MPlug tzPlug = depNodFn.findPlug("translateZ", false, &status);
     
     MString type("kAnimLayer");
     
@@ -304,9 +312,11 @@ void MotionPath::clearParentMatrixCache()
 void MotionPath::findParentMatrixPlug(const MObject &transform, const bool constrained, MPlug &matrixPlug)
 {
 	MFnDagNode dagNodeFn(transform);
-	MPlug parentMatrixPlugs = dagNodeFn.findPlug(constrained ? "worldMatrix" : "parentMatrix");
-	parentMatrixPlugs.evaluateNumElements();
-	matrixPlug = parentMatrixPlugs[0];
+	MStatus status;
+
+	const char* attrName = constrained ? "worldMatrix" : "parentMatrix";
+	MPlug parentMatrixPlugs = dagNodeFn.findPlug(attrName, false, &status);
+	matrixPlug = parentMatrixPlugs.elementByLogicalIndex(0, &status);
 }
 
 bool MotionPath::isCurveTypeAnimatable(MFnAnimCurve::AnimCurveType type)
@@ -445,7 +455,7 @@ void MotionPath::expandKeyFramesCache(const MFnAnimCurve &curve, const Keyframe:
 {
     int numKeys = curve.numKeys();
     
-    double endTime = isDrawing ? endDrawingTime : displayEndTime;
+    double endTime = (this->isDrawing) ? (this->endDrawingTime) : (this->displayEndTime);
     
 	for(int i = 0; i < numKeys; i++)
 	{
@@ -1599,7 +1609,7 @@ void cleanExtraKeysForClipboard(MFnAnimCurve &curve, const MIntArray &keys)
     }
 }
 
-double getTangentValueForClipboard(const MFnAnimCurve &curve, const int keyID, bool inTangent)
+double getTangentValueForClipboard(MFnAnimCurve &curve, const int keyID, bool inTangent)
 {
 	if(!curve.isWeighted())
 	{
@@ -1620,7 +1630,7 @@ double getTangentValueForClipboard(const MFnAnimCurve &curve, const int keyID, b
 	}
 }
 
-MVector evaluateTangentForClipboard(const MFnAnimCurve &cx, MFnAnimCurve &cy, MFnAnimCurve &cz, const int xKeyID, const int yKeyID, const int zKeyID, const bool inTangent)
+MVector evaluateTangentForClipboard(MFnAnimCurve &cx, MFnAnimCurve &cy, MFnAnimCurve &cz, const int xKeyID, const int yKeyID, const int zKeyID, const bool inTangent)
 {
     MVector tangent(0,0,0);
     if (xKeyID != -1)
@@ -1632,7 +1642,7 @@ MVector evaluateTangentForClipboard(const MFnAnimCurve &cx, MFnAnimCurve &cy, MF
     return tangent;
 }
 
-bool isCurveBoundaryKey(const MFnAnimCurve &curve, const MTime &time)
+bool isCurveBoundaryKey(MFnAnimCurve &curve, const MTime &time)
 {
     unsigned int keyID;
     if (!curve.find(time, keyID))
@@ -1640,7 +1650,7 @@ bool isCurveBoundaryKey(const MFnAnimCurve &curve, const MTime &time)
     return keyID == 0 || keyID == curve.numKeys() - 1;
 }
 
-void restoreTangents(const MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
+void restoreTangents(MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
 {
     for (unsigned int index = 0; index < fnSource.numKeys(); ++index)
     {
@@ -1865,7 +1875,7 @@ void MotionPath::storeSelectedKeysInClipboard()
     modifier.undoIt();
 }
 
-bool breakTangentsForKeyCopy(const MFnAnimCurve &curve, const double time, const bool lastKey)
+bool breakTangentsForKeyCopy(MFnAnimCurve &curve, const double time, const bool lastKey)
 {
     return curve.numKeys() > 0 && curve.time(0).as(MTime::uiUnit()) < time && (curve.time(curve.numKeys() - 1).as(MTime::uiUnit()) > time || !lastKey);
 }

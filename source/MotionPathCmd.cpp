@@ -1,3 +1,5 @@
+#include "PlatformFixes.h"
+
 #include <maya/MPointArray.h>
 #include <maya/MFnNurbsCurve.h>
 #include "MotionPathCmd.h"

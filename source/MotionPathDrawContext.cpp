@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include "MotionPathDrawContext.h"
 
 #include "GlobalSettings.h"

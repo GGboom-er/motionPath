@@ -1,3 +1,4 @@
+#include "PlatformFixes.h"
 
 #include "MotionPathEditContext.h"
 #include "GlobalSettings.h"
