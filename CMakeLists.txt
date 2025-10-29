@@ -11,7 +11,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(Maya REQUIRED)
 
 # Add Maya's Qt to CMAKE_PREFIX_PATH if not already set
-# IMPORTANT: Maya 2025 uses Qt 5.15, NOT Qt6!
+# IMPORTANT: Maya 2025 uses Qt 6.5.3 (Qt6)!
 if(NOT CMAKE_PREFIX_PATH)
     if(WIN32)
         list(APPEND CMAKE_PREFIX_PATH "${MAYA_LOCATION}/bin")
@@ -23,22 +23,22 @@ if(NOT CMAKE_PREFIX_PATH)
     message(STATUS "Set CMAKE_PREFIX_PATH to Maya's Qt: ${CMAKE_PREFIX_PATH}")
 endif()
 
-# Qt5 Configuration (Maya 2025 uses Qt 5.15.x)
+# Qt6 Configuration (Maya 2025 uses Qt 6.5.3)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-# Try to find Qt5 first (Maya's version)
-find_package(Qt5 COMPONENTS Core Gui Widgets QUIET)
-if(NOT Qt5_FOUND)
-    message(WARNING "Qt5 not found in CMAKE_PREFIX_PATH")
+# Try to find Qt6 first (Maya 2025's version)
+find_package(Qt6 COMPONENTS Core Gui Widgets QUIET)
+if(NOT Qt6_FOUND)
+    message(WARNING "Qt6 not found in CMAKE_PREFIX_PATH")
     message(STATUS "Trying Maya's Qt location: ${MAYA_LOCATION}/bin")
     set(CMAKE_PREFIX_PATH "${MAYA_LOCATION}/bin" ${CMAKE_PREFIX_PATH})
-    find_package(Qt5 COMPONENTS Core Gui Widgets REQUIRED)
+    find_package(Qt6 COMPONENTS Core Gui Widgets REQUIRED)
 endif()
 
-message(STATUS "Using Qt version: ${Qt5_VERSION}")
+message(STATUS "Using Qt version: ${Qt6_VERSION}")
 
 # Set compile flags
 set(CMAKE_CXX_STANDARD 17)
@@ -123,9 +123,9 @@ target_link_directories(motionPath PUBLIC
 # Link libraries
 target_link_libraries(motionPath PUBLIC
     ${MAYA_LIBRARIES}
-    Qt5::Core
-    Qt5::Gui
-    Qt5::Widgets
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
 )
 
 # Set target properties
@@ -153,7 +153,7 @@ message(STATUS "tcMotionPath Plugin Configuration")
 message(STATUS "==================================================")
 message(STATUS "Maya Version: ${MAYA_VERSION}")
 message(STATUS "Maya Location: ${MAYA_LOCATION}")
-message(STATUS "Qt5 Version: ${Qt5_VERSION}")
+message(STATUS "Qt6 Version: ${Qt6_VERSION}")
 message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "Output: plug-ins/${MAYA_VERSION}/motionPath.mll")
