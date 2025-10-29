@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include "MotionPath.h"
 #include "KeyClipboard.h"
 
@@ -35,7 +37,7 @@ void KeyCopy::copyKeyTangentStatus(MFnAnimCurve &curve, unsigned int keyId, cons
     bool isWeighted = curve.isWeighted();
     
     MAngle angle;
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 201800
 	MFnAnimCurve::TangentValue y;
 #else
     float y;

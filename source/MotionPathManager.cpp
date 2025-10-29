@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include <maya/MModelMessage.h>
 #include <maya/MDagMessage.h>
 #include <maya/MNodeMessage.h>
@@ -491,7 +493,8 @@ void MotionPathManager::getSelection(MObjectArray &objArray)
 		if(!dependNode.isNull() && dependNode.hasFn(MFn::kDependencyNode))
 		{
 			MFnDependencyNode dependNodeFn(dependNode);
-			if (!dependNodeFn.findPlug("translate").isNull())
+			MStatus status;
+			if (!dependNodeFn.findPlug("translate", false, &status).isNull())
 				objArray.append(dependNode);
 		}
 	}

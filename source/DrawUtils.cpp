@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include "DrawUtils.h"
 
 #define PI 3.1415

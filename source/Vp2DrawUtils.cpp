@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include "Vp2DrawUtils.h"
 #include <maya/MPointArray.h>
 

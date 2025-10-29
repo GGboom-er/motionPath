@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include "BufferPath.h"
 #include "GlobalSettings.h"
 #include "DrawUtils.h"

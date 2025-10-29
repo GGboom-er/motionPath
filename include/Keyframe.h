@@ -32,7 +32,7 @@ class Keyframe
 		Keyframe();
 		bool hasTranslationXYZ();
         bool hasRotationXYZ();
-		void setTangent(int keyIndex, const MFnAnimCurve &curve, const Keyframe::Axis &axisName, const Keyframe::Tangent &tangentName);
+		void setTangent(int keyIndex, MFnAnimCurve &curve, const Keyframe::Axis &axisName, const Keyframe::Tangent &tangentName);
 		void setTangentValue(double value, const Keyframe::Axis &axisName, const Keyframe::Tangent &tangentName);
 		void setKeyId(int id, const Keyframe::Axis &axisName);
         void setRotKeyId(int id, const Keyframe::Axis &axisName);

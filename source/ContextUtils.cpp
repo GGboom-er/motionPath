@@ -6,6 +6,8 @@
 //
 //
 
+#include "PlatformFixes.h"
+
 #include "ContextUtils.h"
 #include "Keyframe.h"
 

@@ -1,3 +1,5 @@
+#include "PlatformFixes.h"
+
 #include "MotionPathOverride.h"
 #include "MotionPathManager.h"
 
