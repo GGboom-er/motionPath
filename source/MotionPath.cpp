@@ -1291,7 +1291,7 @@ void MotionPath::setTangentValue(float value, int key, MFnAnimCurve &curve, Keyf
 	else
 	{
 
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 201800
 		MFnAnimCurve::TangentValue x, y;
 #else
 		float x, y;
@@ -1620,7 +1620,7 @@ double getTangentValueForClipboard(MFnAnimCurve &curve, const int keyID, bool in
 	}
 	else
 	{
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 201800
 		MFnAnimCurve::TangentValue x, y;
 #else
 		float x, y;
@@ -1658,7 +1658,7 @@ void restoreTangents(MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
         unsigned int keyID;
         if (fnDest.find(time, keyID))
         {
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 201800
 			MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
 #else
 			float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
@@ -1687,7 +1687,7 @@ void copyKeys(MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
         MFnAnimCurve::TangentType inTType = fnSource.inTangentType(index);
         MFnAnimCurve::TangentType outTType = fnSource.outTangentType(index);
         
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 201800
 		MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
 #else
 		float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;

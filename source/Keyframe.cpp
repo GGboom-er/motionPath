@@ -68,7 +68,7 @@ void Keyframe::setTangent(int keyIndex, MFnAnimCurve &curve, const Keyframe::Axi
 	}
 	else
 	{
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 201800
 		MFnAnimCurve::TangentValue x, y;
 #else
         float x, y;

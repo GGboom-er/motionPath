@@ -39,7 +39,7 @@ public:
     bool tangentsLockedX, tangentsLockedY, tangentsLockedZ;
     bool weightsLockedX, weightsLockedY, weightsLockedZ;
     
-#if defined(MAYA2018)
+#if MAYA_API_VERSION >= 201800
 	MFnAnimCurve::TangentValue xInX, xOutX, xInY, xOutY, xInZ, xOutZ;
 #else
     float xInX, xOutX, xInY, xOutY, xInZ, xOutZ;
