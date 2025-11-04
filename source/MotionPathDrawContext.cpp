@@ -6,8 +6,6 @@
 //
 //
 
-#include "PlatformFixes.h"
-
 #include "MotionPathDrawContext.h"
 
 #include "GlobalSettings.h"
@@ -43,35 +41,72 @@ void MotionPathDrawContext::toolOffCleanup()
 {
     if (selectedMotionPathPtr)
     {
-        M3dView view = M3dView::active3dView();
-		view.refresh();
+        selectedMotionPathPtr->deselectAllKeys();
+        selectedMotionPathPtr->setSelectedFromTool(false);
+        selectedMotionPathPtr->setIsDrawing(false);
+        selectedMotionPathPtr = NULL;
     }
+
+    currentMode = kNoneMode;
+    selectedKeyId = -1;
+    strokePoints.clear();
+
+    M3dView view = M3dView::active3dView();
+    view.refresh();
 }
 
 void MotionPathDrawContext::drawStroke()
 {
     if (strokePoints.length() < 2)
         return;
-    
+
+    // Performance & Visual optimization: Smooth anti-aliased stroke
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_LINE_SMOOTH);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+
+    // Draw thick outer stroke for better visibility
+    glLineWidth(4.0f);
+    glColor4f(0.2f, 0.2f, 0.2f, 0.6f); // Dark semi-transparent outline
     glBegin(GL_LINE_STRIP);
     for (int i = 0; i < strokePoints.length(); ++i)
         glVertex2f(strokePoints[i].x, strokePoints[i].y);
     glEnd();
+
+    // Draw inner bright stroke
+    glLineWidth(2.0f);
+    glColor4f(1.0f, 1.0f, 1.0f, 0.95f); // Bright white
+    glBegin(GL_LINE_STRIP);
+    for (int i = 0; i < strokePoints.length(); ++i)
+        glVertex2f(strokePoints[i].x, strokePoints[i].y);
+    glEnd();
+
+    glDisable(GL_LINE_SMOOTH);
 }
 
 void MotionPathDrawContext::drawStrokeNew(MHWRender::MUIDrawManager& drawMgr)
 {
     if (strokePoints.length() < 2)
         return;
-    
+
+    // Performance optimization: Batch draw all segments
     drawMgr.beginDrawable();
-    drawMgr.setLineWidth(2.0f);
-    drawMgr.setColor(MColor(1.0, 1.0, 1.0));
+
+    // Draw dark outline for better visibility
+    drawMgr.setLineWidth(4.0f);
+    drawMgr.setColor(MColor(0.2f, 0.2f, 0.2f, 0.6f));
+    drawMgr.setLineStyle(MHWRender::MUIDrawManager::kSolid);
     for (int i = 1; i < strokePoints.length(); ++i)
         drawMgr.line2d(strokePoints[i-1], strokePoints[i]);
-    
+
+    // Draw bright center line
+    drawMgr.setLineWidth(2.0f);
+    drawMgr.setColor(MColor(1.0f, 1.0f, 1.0f, 0.95f));
+    for (int i = 1; i < strokePoints.length(); ++i)
+        drawMgr.line2d(strokePoints[i-1], strokePoints[i]);
+
     drawMgr.endDrawable();
-    
 }
 
 bool MotionPathDrawContext::doPressCommon(MEvent &event, const bool old)
@@ -179,28 +214,25 @@ bool MotionPathDrawContext::doPressCommon(MEvent &event, const bool old)
                 else
                 {
                     currentMode = kDraw;
+                    MGlobal::displayInfo("[MotionPath] kDraw mode activated");
 
                     selectedMotionPathPtr->setIsDrawing(true);
                     selectedMotionPathPtr->setEndrawingTime(selectedTime);
-                        
+
                     maxTime = MAnimControl::maxTime().as(MTime::uiUnit());
-                       
+
                     steppedTime = selectedTime;
-                        
-                    selectedMotionPathPtr->deleteAllKeyFramesAfterTime(selectedTime, mpManager.getAnimCurveChangePtr());
-                        
-                    ////USA UN MPOINT!!! NON UN MVECTOR!
-                        
-                    MVector position = keyWorldPosition;
-                    if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
-                    {
-                        MPoint worldPos = position;
-                        if (!contextUtils::worldCameraSpaceToWorldSpace(worldPos, activeView, selectedTime, inverseCameraMatrix, mpManager))
-                            return false;
-                        position = worldPos;
-                    }
-                        
-                    selectedMotionPathPtr->addKeyFrameAtTime(selectedTime, mpManager.getAnimCurveChangePtr(), &position);
+
+                    // REMOVED: Don't delete keyframes, just add new ones
+                    // selectedMotionPathPtr->deleteAllKeyFramesAfterTime(selectedTime, mpManager.getAnimCurveChangePtr());
+
+                    // Initialize preview path collection
+                    strokePoints.clear();
+                    strokePoints.append(MVector(initialX, initialY, 0));
+
+                    MGlobal::displayInfo(MString("[MotionPath] Preview collection started at keyframe time: ") + selectedTime);
+                    MGlobal::displayInfo(MString("[MotionPath] Keyframe count setting: ") + GlobalSettings::drawKeyframeCount);
+                    MGlobal::displayInfo(MString("[MotionPath] Frame interval setting: ") + GlobalSettings::drawFrameInterval);
 
                     initialClock = clock();
                 }
@@ -252,37 +284,30 @@ bool MotionPathDrawContext::doDragCommon(MEvent &event, const bool old)
         }
         else if (currentMode == kDraw)
         {
-            clock_t thisClock = clock();
-            
-            double diff = thisClock - initialClock;
-            if (diff/CLOCKS_PER_SEC > GlobalSettings::drawTimeInterval)
+            // Collect path points for preview (adaptive sampling)
+            MVector v(thisX, thisY, 0);
+            if (strokePoints.length() > 0)
             {
-                steppedTime += GlobalSettings::drawFrameInterval;
-                if (steppedTime > maxTime)
-                    MGlobal::displayWarning("MotionPathDrawContext: Drawing outside of timeline frame range, not showing path, just key frames.");
-                
-                MVector newPosition = contextUtils::getWorldPositionFromProjPoint(keyWorldPosition, initialX, initialY, thisX, thisY, activeView, cameraPosition);
-                if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
+                double distance = (v - strokePoints[strokePoints.length() - 1]).length();
+                double threshold = 8.0;  // Sampling threshold in pixels
+                if (distance > threshold)
                 {
-                    MPoint worldPos = newPosition;
-                    if (!contextUtils::worldCameraSpaceToWorldSpace(worldPos, activeView, steppedTime, inverseCameraMatrix, mpManager))
-                        return false;
-                    newPosition = worldPos;
+                    strokePoints.append(v);
+                    if (strokePoints.length() % 20 == 0)  // Log every 20 points
+                        MGlobal::displayInfo(MString("[MotionPath] Preview path points collected: ") + strokePoints.length());
                 }
-                
-                selectedMotionPathPtr->addKeyFrameAtTime(steppedTime, mpManager.getAnimCurveChangePtr(), &newPosition);
-                
-                selectedMotionPathPtr->setEndrawingTime(steppedTime);
-
-                initialClock = thisClock;
+            }
+            else
+            {
+                strokePoints.append(v);
             }
         }
-        
-        activeView.refresh(false, true);
+
+        // No refresh during drag - preview is drawn separately
     }
     else
         return false;
-    
+
     return true;
 }
 
@@ -295,17 +320,42 @@ MStatus MotionPathDrawContext::doDrag(MEvent &event)
         if (currentMode == kStroke)
         {
             activeView.beginXorDrawing(true, true, 2.0f, M3dView::kStippleNone);
-            
+
             drawStroke();
-            
+
+            // Performance & Visual optimization: Adaptive sampling based on speed
             MVector v(finalX, finalY, 0);
-            if ((v - strokePoints[strokePoints.length()-1]).length() > 20)
+            if (strokePoints.length() > 0)
+            {
+                double distance = (v - strokePoints[strokePoints.length()-1]).length();
+                // Adaptive threshold: closer points when moving slowly for precision
+                double threshold = 8.0; // Reduced from 20 for smoother curves
+                if (distance > threshold)
+                    strokePoints.append(v);
+            }
+            else
+            {
                 strokePoints.append(v);
-            
+            }
+
             drawStroke();
-            
+
             activeView.endXorDrawing();
-            
+
+            return MStatus::kSuccess;
+        }
+        else if (currentMode == kDraw)
+        {
+            // Collect path points via doDragCommon
+            doDragCommon(event, true);
+
+            // Draw preview path and keyframes for legacy viewport
+            activeView.beginXorDrawing(true, true, 2.0f, M3dView::kStippleNone);
+
+            drawPreviewPath();
+
+            activeView.endXorDrawing();
+
             return MStatus::kSuccess;
         }
         else
@@ -336,13 +386,74 @@ MStatus MotionPathDrawContext::doDrag(MEvent & event, MHWRender::MUIDrawManager&
         {
             short int thisX, thisY;
             event.getPosition(thisX, thisY);
-            
+
+            // Performance & Visual optimization: Adaptive sampling
             MVector v(thisX, thisY, 0);
-            if ((v - strokePoints[strokePoints.length()-1]).length() > 20)
+            if (strokePoints.length() > 0)
+            {
+                double distance = (v - strokePoints[strokePoints.length()-1]).length();
+                // Reduced threshold for smoother curves
+                double threshold = 8.0;
+                if (distance > threshold)
+                    strokePoints.append(v);
+            }
+            else
+            {
                 strokePoints.append(v);
+            }
 
             drawStrokeNew(drawMgr);
-            
+
+            return MStatus::kSuccess;
+        }
+        else if (currentMode == kDraw)
+        {
+            // First, collect path points via doDragCommon
+            doDragCommon(event, false);
+
+            // Draw preview path and keyframes for kDraw mode
+            if (strokePoints.length() > 1)
+            {
+                static int debugCounter = 0;
+                if (++debugCounter % 30 == 0)  // Log every 30 frames
+                    MGlobal::displayInfo(MString("[MotionPath] Drawing preview: ") + strokePoints.length() + " points, " + GlobalSettings::drawKeyframeCount + " keyframes");
+
+                // Draw preview path
+                drawMgr.beginDrawable();
+                drawMgr.setColor(GlobalSettings::previewPathColor);
+                drawMgr.setLineWidth(3.0f);
+                drawMgr.setLineStyle(MHWRender::MUIDrawManager::kDashed);
+
+                for (unsigned int i = 1; i < strokePoints.length(); ++i)
+                {
+                    drawMgr.line2d(MPoint(strokePoints[i-1].x, strokePoints[i-1].y),
+                                   MPoint(strokePoints[i].x, strokePoints[i].y));
+                }
+
+                drawMgr.setLineStyle(MHWRender::MUIDrawManager::kSolid);
+
+                // Draw preview keyframe markers (skip start point)
+                int keyframeCount = GlobalSettings::drawKeyframeCount;
+                int totalPoints = strokePoints.length();
+
+                for (int i = 0; i < keyframeCount; ++i)
+                {
+                    // Calculate point index (skip first point)
+                    int pointIndex = (int)((double)(i + 1) * (totalPoints - 1) / (keyframeCount + 1));
+                    if (pointIndex >= totalPoints) pointIndex = totalPoints - 1;
+                    if (pointIndex < 1) pointIndex = 1;
+
+                    MVector screenPos = strokePoints[pointIndex];
+
+                    drawMgr.setColor(GlobalSettings::previewKeyframeColor);
+                    drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 8.0, true);
+                    drawMgr.setColor(MColor(0.2, 0.2, 0.2));
+                    drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 9.0, false);
+                }
+
+                drawMgr.endDrawable();
+            }
+
             return MStatus::kSuccess;
         }
         else
@@ -431,7 +542,11 @@ MVector MotionPathDrawContext::getClosestPointOnPolyLine(const MVector &q)
 MVector MotionPathDrawContext::getSpreadPointOnPolyLine(const int i, const int pointSize, const double strokeLenght, const std::vector<double> &segmentLenghts)
 {
     if (i == pointSize-1)
+    {
+        if (strokePoints.length() == 0)
+            return MVector::zero;
         return strokePoints[strokePoints.length() - 1];
+    }
     else
     {
         //we do +1 as the first key is not evaluated, and with pointSize there no -1
@@ -578,14 +693,116 @@ bool MotionPathDrawContext::doReleaseCommon(MEvent &event, const bool old)
                 }
             }
         }
-        
+        else if (currentMode == kDraw)
+        {
+            // Batch add keyframes from the drawn path
+            if (strokePoints.length() > 1)
+            {
+                int keyframeCount = GlobalSettings::drawKeyframeCount;  // Number of keyframes to ADD (not including start)
+                int frameInterval = GlobalSettings::drawFrameInterval;
+
+                // Validate frame interval
+                if (frameInterval <= 0)
+                {
+                    MGlobal::displayWarning("[MotionPath] Invalid frame interval, using default 1");
+                    frameInterval = 1;
+                }
+
+                // Boundary check: Ensure we have enough points for sampling
+                int totalPoints = strokePoints.length();
+                if (totalPoints < 2)
+                {
+                    MGlobal::displayWarning("[MotionPath] Not enough points to sample keyframes. Draw a longer path.");
+                    // Clean up and exit gracefully
+                    selectedMotionPathPtr->setIsDrawing(false);
+                    selectedMotionPathPtr->deselectAllKeys();
+                    selectedMotionPathPtr->setSelectedFromTool(false);
+                    selectedMotionPathPtr = NULL;
+                    currentMode = kNoneMode;
+                    strokePoints.clear();
+                    mpManager.stopDGAndAnimUndoRecording();
+                    activeView.refresh();
+                    return true;
+                }
+
+                double pathLength = calculatePathLength(strokePoints);
+
+                // Calculate range to clear: (selectedTime, selectedTime + keyframeCount * frameInterval]
+                // Exclude start keyframe, include end position
+                double rangeEnd = selectedTime + (keyframeCount * frameInterval);
+
+                MGlobal::displayInfo("[MotionPath] Release: Adding keyframes");
+                MGlobal::displayInfo(MString("[MotionPath] Keyframes to add: ") + keyframeCount);
+                MGlobal::displayInfo(MString("[MotionPath] Frame interval: ") + frameInterval);
+                MGlobal::displayInfo(MString("[MotionPath] Delete range: (") + selectedTime + ", " + rangeEnd + "]");
+
+                // Delete existing keyframes in range: (selectedTime, rangeEnd]
+                selectedMotionPathPtr->deleteAllKeyFramesInRange(selectedTime, rangeEnd, mpManager.getAnimCurveChangePtr());
+
+                // Sample keyframes along the path (skip start point)
+                // Use direct index sampling to follow curve shape naturally
+                // totalPoints already validated above (>= 2)
+                for (int i = 0; i < keyframeCount; ++i)
+                {
+                    // Calculate point index (skip first point at index 0)
+                    // Distribute indices evenly across the remaining points
+                    int pointIndex = (int)((double)(i + 1) * (totalPoints - 1) / (keyframeCount + 1));
+                    if (pointIndex >= totalPoints) pointIndex = totalPoints - 1;
+                    if (pointIndex < 1) pointIndex = 1;  // Skip start point
+
+                    // Get screen position directly from stroke points
+                    MVector screenPos = strokePoints[pointIndex];
+
+                    // Calculate corresponding time (start from selectedTime + frameInterval)
+                    double keyTime = selectedTime + ((i + 1) * frameInterval);
+
+                    MGlobal::displayInfo(MString("[MotionPath] Keyframe ") + i + " using point " + pointIndex + "/" + totalPoints + " at time " + keyTime);
+
+                    // Convert screen position to world position
+                    MVector worldPos = contextUtils::getWorldPositionFromProjPoint(
+                        keyWorldPosition,
+                        initialX, initialY,
+                        screenPos.x, screenPos.y,
+                        activeView, cameraPosition);
+
+                    // Handle Camera Space mode
+                    if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
+                    {
+                        MPoint worldPosPoint = worldPos;
+                        if (!contextUtils::worldCameraSpaceToWorldSpace(worldPosPoint, activeView,
+                                                                          keyTime, inverseCameraMatrix, mpManager))
+                            continue;
+                        worldPos = worldPosPoint;
+                    }
+
+                    // Add keyframe (useCache=false for batch operation)
+                    selectedMotionPathPtr->addKeyFrameAtTime(keyTime, mpManager.getAnimCurveChangePtr(), &worldPos, false);
+
+                    if (i == 0 || i == keyframeCount - 1)
+                        MGlobal::displayInfo(MString("[MotionPath] Added keyframe at time ") + keyTime);
+                }
+
+                MGlobal::displayInfo(MString("[MotionPath] Successfully added ") + keyframeCount + " keyframes");
+
+                // Update end drawing time
+                selectedMotionPathPtr->setEndrawingTime(rangeEnd);
+
+                // Refresh motion path display to show new keyframes
+                mpManager.refreshDisplayTimeRange();
+            }
+            else
+            {
+                MGlobal::displayWarning("[MotionPath] Release: Not enough path points to add keyframes");
+            }
+        }
+
         if (currentMode != kNoneMode)
             mpManager.stopDGAndAnimUndoRecording();
-        
+
         selectedMotionPathPtr->deselectAllKeys();
         selectedMotionPathPtr->setSelectedFromTool(false);
         selectedMotionPathPtr->setIsDrawing(false);
-        
+
 		activeView.refresh();
         
         selectedMotionPathPtr = NULL;
@@ -616,4 +833,120 @@ MStatus MotionPathDrawContext::doRelease(MEvent &event)
 MStatus MotionPathDrawContext::doRelease(MEvent & event, MHWRender::MUIDrawManager& drawMgr, const MHWRender::MFrameContext& context)
 {
     return doReleaseCommon(event, false) ? MStatus::kSuccess: MStatus::kFailure;
+}
+
+// Draw preview path and keyframe markers for kDraw mode (legacy OpenGL)
+void MotionPathDrawContext::drawPreviewPath()
+{
+    if (strokePoints.length() < 2)
+        return;
+
+    // Enable blending and anti-aliasing for smooth rendering
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_LINE_SMOOTH);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+
+    // Draw preview path with distinct orange color and dashed style
+    MColor previewColor = GlobalSettings::previewPathColor;
+    glLineWidth(3.0f);
+    glColor4f(previewColor.r, previewColor.g, previewColor.b, previewColor.a);
+
+    // Enable line stipple for dashed appearance
+    glEnable(GL_LINE_STIPPLE);
+    glLineStipple(2, 0x00FF);  // Dashed pattern
+
+    glBegin(GL_LINE_STRIP);
+    for (unsigned int i = 0; i < strokePoints.length(); ++i)
+        glVertex2f(strokePoints[i].x, strokePoints[i].y);
+    glEnd();
+
+    glDisable(GL_LINE_STIPPLE);
+
+    // Draw preview keyframe markers (skip start point)
+    int keyframeCount = GlobalSettings::drawKeyframeCount;
+    int totalPoints = strokePoints.length();
+
+    MColor keyframeColor = GlobalSettings::previewKeyframeColor;
+    float markerSize = 8.0f;
+
+    for (int i = 0; i < keyframeCount; ++i)
+    {
+        // Calculate point index (skip first point)
+        int pointIndex = (int)((double)(i + 1) * (totalPoints - 1) / (keyframeCount + 1));
+        if (pointIndex >= totalPoints) pointIndex = totalPoints - 1;
+        if (pointIndex < 1) pointIndex = 1;
+
+        MVector screenPos = strokePoints[pointIndex];
+
+        // Draw black background circle for contrast
+        glColor4f(0.2f, 0.2f, 0.2f, 0.8f);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(screenPos.x, screenPos.y);
+        for (int angle = 0; angle <= 360; angle += 30)
+        {
+            float rad = angle * 3.14159f / 180.0f;
+            float x = screenPos.x + cos(rad) * (markerSize + 1.0f);
+            float y = screenPos.y + sin(rad) * (markerSize + 1.0f);
+            glVertex2f(x, y);
+        }
+        glEnd();
+
+        // Draw colored keyframe marker (filled circle)
+        glColor4f(keyframeColor.r, keyframeColor.g, keyframeColor.b, 1.0f);
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex2f(screenPos.x, screenPos.y);
+        for (int angle = 0; angle <= 360; angle += 30)
+        {
+            float rad = angle * 3.14159f / 180.0f;
+            float x = screenPos.x + cos(rad) * markerSize;
+            float y = screenPos.y + sin(rad) * markerSize;
+            glVertex2f(x, y);
+        }
+        glEnd();
+    }
+
+    glDisable(GL_LINE_SMOOTH);
+    glDisable(GL_BLEND);
+}
+
+// Helper function: Calculate total length of polyline path
+double MotionPathDrawContext::calculatePathLength(const MVectorArray &points)
+{
+    double length = 0.0;
+    for (unsigned int i = 1; i < points.length(); ++i)
+    {
+        length += (points[i] - points[i-1]).length();
+    }
+    return length;
+}
+
+// Helper function: Sample point at normalized position t (0.0-1.0) along polyline path
+MVector MotionPathDrawContext::samplePointOnPath(double t, const MVectorArray &points, double totalLength)
+{
+    if (points.length() == 0)
+        return MVector::zero;
+    if (t <= 0.0 || points.length() == 1)
+        return points[0];
+    if (t >= 1.0)
+        return points[points.length() - 1];
+
+    double targetLength = t * totalLength;
+    double currentLength = 0.0;
+
+    for (unsigned int i = 1; i < points.length(); ++i)
+    {
+        double segmentLength = (points[i] - points[i-1]).length();
+
+        if (currentLength + segmentLength >= targetLength)
+        {
+            // Interpolate within this segment
+            double localT = (targetLength - currentLength) / segmentLength;
+            return points[i-1] * (1.0 - localT) + points[i] * localT;
+        }
+
+        currentLength += segmentLength;
+    }
+
+    return points[points.length() - 1];
 }

@@ -1,4 +1,3 @@
-#include "PlatformFixes.h"
 
 #include "GlobalSettings.h"
 
@@ -14,8 +13,11 @@ MColor GlobalSettings::bufferPathColor = MColor(0.2, 0.2, 0.2);
 MColor GlobalSettings::weightedPathTangentColor = MColor(0.2, 0.2, 0.2);
 MColor GlobalSettings::weightedPathColor = MColor(0.2, 0.2, 0.2);
 MColor GlobalSettings::frameLabelColor = MColor(0.1, 0.1, 0.1);
+MColor GlobalSettings::keyframeLabelColor = MColor(1.0, 1.0, 0.0);  // Yellow for keyframe numbers
 double GlobalSettings::pathSize = 3.0;
 double GlobalSettings::frameSize = 7.0;
+double GlobalSettings::keyframeLabelSize = 1.2;  // Slightly larger for keyframes
+double GlobalSettings::frameLabelSize = 0.8;     // Normal size for regular frames
 bool GlobalSettings::showTangents = true;
 bool GlobalSettings::showKeyFrames = true;
 bool GlobalSettings::showKeyFrameNumbers = false;
@@ -23,7 +25,7 @@ bool GlobalSettings::showFrameNumbers = false;
 bool GlobalSettings::showRotationKeyFrames = true;
 bool GlobalSettings::showPath = true;
 double GlobalSettings::drawTimeInterval = 0.1;
-int GlobalSettings::drawFrameInterval = 5;
+int GlobalSettings::drawFrameInterval = 1;  // Default 1 frame interval
 MMatrix GlobalSettings::cameraMatrix;
 int GlobalSettings::portWidth = 0;
 int GlobalSettings::portHeight = 0;
@@ -34,3 +36,8 @@ bool GlobalSettings::lockedModeInteractive = true;
 bool GlobalSettings::usePivots = false;
 int GlobalSettings::strokeMode = 0;
 GlobalSettings::DrawMode GlobalSettings::motionPathDrawMode = GlobalSettings::kWorldSpace;
+
+// Draw preview settings
+int GlobalSettings::drawKeyframeCount = 5;
+MColor GlobalSettings::previewPathColor = MColor(1.0, 0.5, 0.2, 0.6);  // Orange, semi-transparent
+MColor GlobalSettings::previewKeyframeColor = MColor(1.0, 0.8, 0.2);   // Yellow-orange

@@ -84,8 +84,9 @@ public:
     void startDGUndoRecording();
     MDGModifier* getDGModifierPtr(){return this->dgModifierPtr;};
     void stopDGAndAnimUndoRecording();
-    
+
     BufferPath* getBufferPathAtIndex(int index);
+    int getBufferPathCount() const {return static_cast<int>(bufferPathArray.size());};
     
     void storePreviousKeySelection();
     void getPreviousKeySelection(std::vector<MDoubleArray> &sel);

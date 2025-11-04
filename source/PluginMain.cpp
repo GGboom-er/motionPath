@@ -1,4 +1,3 @@
-#include "PlatformFixes.h"
 
 /*
 MotionPath is an interactive tool to show and manipulate animation curves in maya's 3d viewport.

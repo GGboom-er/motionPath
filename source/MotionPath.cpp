@@ -6,11 +6,10 @@
 //
 //
 
-#include "PlatformFixes.h"
-
 #define TANGENT_TIME_DELTA 0.01
 
 #include <QtWidgets/QApplication> 
+#include <cmath>
 
 #include "MotionPathManager.h"
 #include "GlobalSettings.h"
@@ -32,23 +31,21 @@ MotionPath::MotionPath(const MObject &object)
     thisObject = object;
 
     MFnDependencyNode depNodFn(object);
-    MStatus status;
+    txPlug = depNodFn.findPlug("translateX", false);
+    tyPlug = depNodFn.findPlug("translateY", false);
+    tzPlug = depNodFn.findPlug("translateZ", false);
 
-    txPlug = depNodFn.findPlug("translateX", false, &status);
-    tyPlug = depNodFn.findPlug("translateY", false, &status);
-    tzPlug = depNodFn.findPlug("translateZ", false, &status);
+    rxPlug = depNodFn.findPlug("rotateX", false);
+    ryPlug = depNodFn.findPlug("rotateY", false);
+    rzPlug = depNodFn.findPlug("rotateZ", false);
 
-    rxPlug = depNodFn.findPlug("rotateX", false, &status);
-    ryPlug = depNodFn.findPlug("rotateY", false, &status);
-    rzPlug = depNodFn.findPlug("rotateZ", false, &status);
+    rpxPlug = depNodFn.findPlug("rotatePivotX", false);
+    rpyPlug = depNodFn.findPlug("rotatePivotY", false);
+    rpzPlug = depNodFn.findPlug("rotatePivotZ", false);
 
-    rpxPlug = depNodFn.findPlug("rotatePivotX", false, &status);
-    rpyPlug = depNodFn.findPlug("rotatePivotY", false, &status);
-    rpzPlug = depNodFn.findPlug("rotatePivotZ", false, &status);
-
-    rptxPlug = depNodFn.findPlug("rotatePivotTranslateX", false, &status);
-    rptyPlug = depNodFn.findPlug("rotatePivotTranslateY", false, &status);
-    rptzPlug = depNodFn.findPlug("rotatePivotTranslateZ", false, &status);
+    rptxPlug = depNodFn.findPlug("rotatePivotTranslateX", false);
+    rptyPlug = depNodFn.findPlug("rotatePivotTranslateY", false);
+    rptzPlug = depNodFn.findPlug("rotatePivotTranslateZ", false);
 
     isDrawing = false;
     
@@ -110,15 +107,13 @@ void MotionPath::cacheParentMatrixRange()
 void MotionPath::cacheParentMatrixRangeForWorldCallback(MObject &transformNode)
 {
     MFnDependencyNode depNodFn(transformNode);
-    MStatus status;
+    MPlug txP = depNodFn.findPlug("translateX", false);
+    MPlug tyP = depNodFn.findPlug("translateY", false);
+    MPlug tzP = depNodFn.findPlug("translateZ", false);
 
-    MPlug txP = depNodFn.findPlug("translateX", false, &status);
-    MPlug tyP = depNodFn.findPlug("translateY", false, &status);
-    MPlug tzP = depNodFn.findPlug("translateZ", false, &status);
-
-    MPlug rxP = depNodFn.findPlug("rotateX", false, &status);
-    MPlug ryP = depNodFn.findPlug("rotateY", false, &status);
-    MPlug rzP = depNodFn.findPlug("rotateZ", false, &status);
+    MPlug rxP = depNodFn.findPlug("rotateX", false);
+    MPlug ryP = depNodFn.findPlug("rotateY", false);
+    MPlug rzP = depNodFn.findPlug("rotateZ", false);
     
     MStatus txStatus, tyStatus, tzStatus, rxStatus, ryStatus, rzStatus, sxStatus, syStatus, szStatus;
     MFnAnimCurve cTX(txP, &txStatus);
@@ -228,11 +223,9 @@ void MotionPath::worldMatrixChangedCallback(MObject& transformNode, MDagMessage:
 bool MotionPath::hasAnimationLayers(const MObject &object)
 {
     MFnDependencyNode depNodFn(object);
-    MStatus status;
-
-    MPlug txPlug = depNodFn.findPlug("translateX", false, &status);
-    MPlug tyPlug = depNodFn.findPlug("translateY", false, &status);
-    MPlug tzPlug = depNodFn.findPlug("translateZ", false, &status);
+    MPlug txPlug = depNodFn.findPlug("translateX", false);
+    MPlug tyPlug = depNodFn.findPlug("translateY", false);
+    MPlug tzPlug = depNodFn.findPlug("translateZ", false);
     
     MString type("kAnimLayer");
     
@@ -312,11 +305,9 @@ void MotionPath::clearParentMatrixCache()
 void MotionPath::findParentMatrixPlug(const MObject &transform, const bool constrained, MPlug &matrixPlug)
 {
 	MFnDagNode dagNodeFn(transform);
-	MStatus status;
-
-	const char* attrName = constrained ? "worldMatrix" : "parentMatrix";
-	MPlug parentMatrixPlugs = dagNodeFn.findPlug(attrName, false, &status);
-	matrixPlug = parentMatrixPlugs.elementByLogicalIndex(0, &status);
+	MPlug parentMatrixPlugs = dagNodeFn.findPlug(constrained ? "worldMatrix" : "parentMatrix", false);
+	parentMatrixPlugs.evaluateNumElements();
+	matrixPlug = parentMatrixPlugs[0];
 }
 
 bool MotionPath::isCurveTypeAnimatable(MFnAnimCurve::AnimCurveType type)
@@ -334,13 +325,32 @@ void MotionPath::setTimeRange(double startTime, double endTime)
 
 void MotionPath::setDisplayTimeRange(double start, double end)
 {
-	displayStartTime = start;
-	if(displayStartTime < startTimeCached)
-		displayStartTime = startTimeCached;
-    
-	displayEndTime = end;
-	if(displayEndTime > endTimeCached)
-		displayEndTime = endTimeCached;
+    // 1. 获取动画曲线状态
+    MStatus xStatus, yStatus, zStatus;
+    MFnAnimCurve curveX(txPlug, &xStatus);
+    MFnAnimCurve curveY(tyPlug, &yStatus);
+    MFnAnimCurve curveZ(tzPlug, &zStatus);
+
+    // 2. 获取关键帧的实际范围
+    double actualMinFrame = this->startTime;  // 默认时间轴起点
+    double actualMaxFrame = this->endTime;    // 默认时间轴终点
+
+    if (xStatus != MS::kNotFound && yStatus != MS::kNotFound && zStatus != MS::kNotFound &&
+        curveX.numKeys() > 0 && curveY.numKeys() > 0 && curveZ.numKeys() > 0)
+    {
+        actualMinFrame = getMinTime(curveX, curveY, curveZ);
+        actualMaxFrame = getMaxTime(curveX, curveY, curveZ);
+    }
+
+    // 3. 修正输入 start/end 越界
+    if (start > actualMaxFrame) start = actualMaxFrame;
+    if (end   < actualMinFrame) end   = actualMinFrame;
+
+    // 4. 保证 start <= end
+    if (start > end) std::swap(start, end);
+
+    displayStartTime = std::max(start, actualMinFrame);
+    displayEndTime   = std::min(end,   actualMaxFrame);
 
 }
 
@@ -357,7 +367,7 @@ void MotionPath::growParentAndPivotMatrixCache(double time, double expansion)
 	double evalTimeBefore = time - expansion;
 	if(evalTimeBefore < (time - GlobalSettings::framesBack))
 		evalTimeBefore = time - GlobalSettings::framesBack;
-    
+
 	double evalTimeAfter = time + expansion;
 	if(evalTimeAfter > (time + GlobalSettings::framesFront))
 		evalTimeAfter = time + GlobalSettings::framesFront;
@@ -367,13 +377,13 @@ void MotionPath::growParentAndPivotMatrixCache(double time, double expansion)
         ensureParentAndPivotMatrixAtTime(evalTimeBefore);
 		startTimeCached = evalTimeBefore;
 	}
-    
+
 	if(evalTimeAfter <= this->endTime)
 	{
         ensureParentAndPivotMatrixAtTime(evalTimeAfter);
 		endTimeCached = evalTimeAfter;
 	}
-    
+
 	if(startTimeCached == startTime && endTimeCached == endTime)
 		cacheDone = true;
 }
@@ -382,17 +392,18 @@ void MotionPath::drawKeyFrames(CameraCache *cachePtr, MMatrix &currentCameraMatr
 {
     int portWidth = GlobalSettings::portWidth;
     int portHeight = GlobalSettings::portHeight;
-    
+
     if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
     {
+        if (!cachePtr) return;
         portWidth = cachePtr->portWidth;
         portHeight = cachePtr->portHeight;
     }
-    
+
 	if (drawManager)
-		VP2DrawUtils::drawKeyFramePoints(keyframesCache, GlobalSettings::frameSize * 1.5, colorMultiplier, portWidth, portHeight, GlobalSettings::showRotationKeyFrames, currentCameraMatrix, drawManager, frameContext);
+		VP2DrawUtils::drawKeyFramePoints(keyframesCache, GlobalSettings::frameSize * GlobalSettings::KEYFRAME_SIZE_MULTIPLIER, colorMultiplier, portWidth, portHeight, GlobalSettings::showRotationKeyFrames, currentCameraMatrix, drawManager, frameContext);
 	else
-		drawUtils::drawKeyFramePoints(keyframesCache, GlobalSettings::frameSize * 1.5, colorMultiplier, portWidth, portHeight, GlobalSettings::showRotationKeyFrames);
+		drawUtils::drawKeyFramePoints(keyframesCache, GlobalSettings::frameSize * GlobalSettings::KEYFRAME_SIZE_MULTIPLIER, colorMultiplier, portWidth, portHeight, GlobalSettings::showRotationKeyFrames);
 }
 
 void MotionPath::drawFrames(CameraCache* cachePtr, const MMatrix &currentCameraMatrix, M3dView &view, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext)
@@ -402,33 +413,36 @@ void MotionPath::drawFrames(CameraCache* cachePtr, const MMatrix &currentCameraM
     if(this->selectedFromTool)  curveColor *= 1.3;
 
     curveColor *= colorMultiplier;
-    
+
     ensureParentAndPivotMatrixAtTime(displayStartTime);
-    
+
     MVector previousWorldPos = multPosByParentMatrix(getPos(displayStartTime), pMatrixCache[displayStartTime]);
     if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
     {
+        if (!cachePtr) return;
         cachePtr->ensureMatricesAtTime(displayStartTime);
         previousWorldPos = MPoint(previousWorldPos) * cachePtr->matrixCache[displayStartTime] * currentCameraMatrix;
     }
-    
-	for(double i = displayStartTime + 1.0; i <= displayEndTime; i += 1.0)
+
+	// Use drawTimeInterval to control path sampling density
+	for(double i = displayStartTime + GlobalSettings::drawTimeInterval; i <= displayEndTime; i += GlobalSettings::drawTimeInterval)
 	{
         ensureParentAndPivotMatrixAtTime(i);
-        
+
 		MVector worldPos = multPosByParentMatrix(getPos(i), pMatrixCache[i]);
         if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
         {
+            if (!cachePtr) return;
             cachePtr->ensureMatricesAtTime(i);
             worldPos = MPoint(worldPos) * cachePtr->matrixCache[i] * currentCameraMatrix;
         }
-        
+
         if (GlobalSettings::showPath)
         {
             double factor = 1;
             if (GlobalSettings::alternatingFrames)
                 factor = int(i) % 2 == 1 ? 1.4 : 0.6;
-                
+
 			if (drawManager)
 				VP2DrawUtils::drawLineWithColor(previousWorldPos, worldPos, GlobalSettings::pathSize, curveColor * factor, currentCameraMatrix, drawManager, frameContext);
 			else
@@ -440,7 +454,7 @@ void MotionPath::drawFrames(CameraCache* cachePtr, const MMatrix &currentCameraM
 		else
 			drawUtils::drawPointWithColor(previousWorldPos, GlobalSettings::pathSize, curveColor);
         previousWorldPos = worldPos;
-        
+
 		if (i == displayEndTime)
 		{
 			if (drawManager)
@@ -451,41 +465,58 @@ void MotionPath::drawFrames(CameraCache* cachePtr, const MMatrix &currentCameraM
 	}
 }
 
-void MotionPath::expandKeyFramesCache(const MFnAnimCurve &curve, const Keyframe::Axis &axisName, bool isTranslate)
+void MotionPath::expandKeyFramesCache(MFnAnimCurve& curve, const Keyframe::Axis& axisName, bool isTranslate)
+//                                     ^^^^^^^^^^^^^ �Ƴ�const
 {
-    int numKeys = curve.numKeys();
-    
-    double endTime = (this->isDrawing) ? (this->endDrawingTime) : (this->displayEndTime);
-    
-	for(int i = 0; i < numKeys; i++)
-	{
-		MTime keyTime = curve.time(i);
-		double keyTimeVal = keyTime.as(MTime::uiUnit());
-        
-		if(keyTimeVal >= displayStartTime)
-		{
-			if(keyTimeVal <= endTime)
-			{
-                //we don't want to add a keyframe if only rotation keyframes are present at this time
-                if (!isTranslate && keyframesCache.find(keyTimeVal) == keyframesCache.end())
-                    continue;
-                
-				Keyframe* keyframePtr = &keyframesCache[keyTimeVal];
-                
+    MStatus stat;
+    int numKeys = curve.numKeys(&stat);
+    if (stat != MS::kSuccess || numKeys == 0)
+        return;
+
+    double endTime = isDrawing ? endDrawingTime : displayEndTime;
+
+    for (int i = 0; i < numKeys; i++)
+    {
+        MTime keyTime = curve.time(i, &stat);
+        if (stat != MS::kSuccess)
+            continue;
+
+        double keyTimeVal = keyTime.as(MTime::uiUnit());
+
+        if (keyTimeVal >= displayStartTime)
+        {
+            if (keyTimeVal <= endTime)
+            {
+                // Fix: Allow rotation keyframes to create new entries in keyframesCache
+                // Previously, rotation keyframes were only added if a translation keyframe already existed
+                // Now, pure rotation keyframes can also be displayed on the motion path
+                Keyframe* keyframePtr = &keyframesCache[keyTimeVal];
+
                 if (isTranslate)
                 {
                     keyframePtr->time = keyTimeVal;
-                
+
+                    // Can pass non-const reference
                     keyframePtr->setTangent(i, curve, axisName, Keyframe::kInTangent);
                     keyframePtr->setTangent(i, curve, axisName, Keyframe::kOutTangent);
-                
+
                     keyframePtr->setKeyId(i, axisName);
-                
-                    if(keyframePtr->tangentsLocked)
-                        keyframePtr->tangentsLocked = curve.tangentsLocked(i);
+
+                    bool areTangentsLocked = curve.tangentsLocked(i, &stat);
+                    if (stat == MS::kSuccess)
+                    {
+                        if (keyframePtr->tangentsLocked)
+                            keyframePtr->tangentsLocked = areTangentsLocked;
+                    }
                 }
                 else
+                {
+                    // Fix: For pure rotation keyframes, also set the time
+                    // This ensures the keyframe is properly initialized even without translation keys
+                    // Note: Setting time multiple times (for multi-axis rotation) is safe
+                    keyframePtr->time = keyTimeVal;
                     keyframePtr->setRotKeyId(i, axisName);
+                }
             }
             else
                 break;
@@ -500,22 +531,23 @@ MVector MotionPath::getPos(double time)
 	{
 		MTime evalTime(time, MTime::uiUnit());
 		MDGContext context(evalTime);
-        
-		pos.x = txPlug.asDouble(context);
-		pos.y = tyPlug.asDouble(context);
-		pos.z = tzPlug.asDouble(context);
+
+		MStatus status;
+		pos.x = txPlug.asDouble(context, &status);
+		pos.y = tyPlug.asDouble(context, &status);
+		pos.z = tzPlug.asDouble(context, &status);
 	}
-    
+
 	return pos;
 }
 
 MVector MotionPath::multPosByParentMatrix(const MVector &vec, const MMatrix &mat)
-{   
+{
 	MVector multipliedVec;
     multipliedVec = vec * mat;
     multipliedVec.x += mat[3][0];
     multipliedVec.y += mat[3][1];
-    multipliedVec.z += mat[3][2];   
+    multipliedVec.z += mat[3][2];
 	return multipliedVec;
 }
 
@@ -529,7 +561,7 @@ void MotionPath::setShowInOutTangents(const MFnAnimCurve &curveTX, const MFnAnim
     //if none of these are animated we don't want to proceed as this would also mean adding a keyframe to the frames cache
     if (curveTX.numKeys() == 0 && curveTY.numKeys() == 0 && curveTZ.numKeys() == 0)
         return;
-        
+
     double minTimeX = curveTX.time(0).as(MTime::uiUnit());
     double maxTimeX = curveTX.time(curveTX.numKeys() - 1).as(MTime::uiUnit());
     double minTimeY = curveTY.time(0).as(MTime::uiUnit());
@@ -543,31 +575,31 @@ void MotionPath::setShowInOutTangents(const MFnAnimCurve &curveTX, const MFnAnim
         keyFramePtr = &keyframesCache[minTimeX];
         keyFramePtr->showInTangent = showTangent(minTimeX, keyFramePtr->yKeyId, minTimeY, keyFramePtr->zKeyId, minTimeZ);
     }
-    
+
     if (minTimeY >= displayStartTime && minTimeY <= displayEndTime)
     {
         keyFramePtr = &keyframesCache[minTimeY];
         keyFramePtr->showInTangent = showTangent(minTimeY, keyFramePtr->xKeyId, minTimeX, keyFramePtr->zKeyId, minTimeZ);
     }
-    
+
     if (minTimeZ >= displayStartTime && minTimeZ <= displayEndTime)
     {
         keyFramePtr = &keyframesCache[minTimeZ];
         keyFramePtr->showInTangent = showTangent(minTimeZ, keyFramePtr->xKeyId, minTimeX, keyFramePtr->yKeyId, minTimeY);
     }
-    
+
     if (maxTimeX >= displayStartTime && maxTimeX <= displayEndTime)
     {
         keyFramePtr = &keyframesCache[maxTimeX];
         keyFramePtr->showOutTangent = showTangent(maxTimeX, keyFramePtr->yKeyId, maxTimeY, keyFramePtr->zKeyId, maxTimeZ);
     }
-    
+
     if (maxTimeY >= displayStartTime && maxTimeY <= displayEndTime)
     {
         keyFramePtr = &keyframesCache[maxTimeY];
         keyFramePtr->showOutTangent = showTangent(maxTimeY, keyFramePtr->xKeyId, maxTimeX, keyFramePtr->zKeyId, maxTimeZ);
     }
-    
+
     if (maxTimeZ >= displayStartTime && maxTimeZ <= displayEndTime)
     {
         keyFramePtr = &keyframesCache[maxTimeZ];
@@ -578,7 +610,7 @@ void MotionPath::setShowInOutTangents(const MFnAnimCurve &curveTX, const MFnAnim
 MVector MotionPath::getVectorFromPlugs(const MTime &evalTime, const MPlug &x, const MPlug &y, const MPlug &z)
 {
     MDGContext context(evalTime);
-    
+
     MVector pos;
     pos.x = x.asDouble(context);
     pos.y = y.asDouble(context);
@@ -598,14 +630,14 @@ MMatrix MotionPath::getPMatrixAtTime(const MTime &evalTime)
         pivotMtx[3][1] = piv.y;
         pivotMtx[3][2] = piv.z;
 		m = pivotMtx * m;
-        
+
         piv = getVectorFromPlugs(evalTime, rptxPlug, rptyPlug, rptzPlug);
         pivotMtx[3][0] = piv.x;
         pivotMtx[3][1] = piv.y;
         pivotMtx[3][2] = piv.z;
         m = pivotMtx * m;
     }
-    
+
     return m;
 }
 
@@ -618,60 +650,69 @@ void MotionPath::ensureParentAndPivotMatrixAtTime(const double time)
     }
 }
 
-void MotionPath::cacheKeyFrames(const MFnAnimCurve &curveTX, const MFnAnimCurve &curveTY, const MFnAnimCurve &curveTZ, const MFnAnimCurve &curveRX, const MFnAnimCurve &curveRY, const MFnAnimCurve &curveRZ, CameraCache* cachePtr, const MMatrix &currentCameraMatrix)
+void MotionPath::cacheKeyFrames(MFnAnimCurve& curveTX,
+    MFnAnimCurve& curveTY,
+    MFnAnimCurve& curveTZ,
+    MFnAnimCurve& curveRX,
+    MFnAnimCurve& curveRY,
+    MFnAnimCurve& curveRZ,
+    CameraCache* cachePtr,
+    const MMatrix& currentCameraMatrix)
+    //                               ^^^^^^^^^^^^^ �Ƴ�����const
 {
     if (isCurveTypeAnimatable(curveTX.animCurveType()))
         expandKeyFramesCache(curveTX, Keyframe::kAxisX, true);
 
     if (isCurveTypeAnimatable(curveTY.animCurveType()))
         expandKeyFramesCache(curveTY, Keyframe::kAxisY, true);
-    
+
     if (isCurveTypeAnimatable(curveTZ.animCurveType()))
         expandKeyFramesCache(curveTZ, Keyframe::kAxisZ, true);
-    
+
     if (GlobalSettings::showRotationKeyFrames)
     {
         if (isCurveTypeAnimatable(curveRX.animCurveType()))
             expandKeyFramesCache(curveRX, Keyframe::kAxisX, false);
-        
+
         if (isCurveTypeAnimatable(curveRY.animCurveType()))
             expandKeyFramesCache(curveRY, Keyframe::kAxisY, false);
-        
+
         if (isCurveTypeAnimatable(curveRZ.animCurveType()))
             expandKeyFramesCache(curveRZ, Keyframe::kAxisZ, false);
     }
-    
+
     setShowInOutTangents(curveTX, curveTY, curveTZ);
-    
-	int i = 0;
-	for(KeyframeMapIterator keyIt = keyframesCache.begin(); keyIt != keyframesCache.end(); keyIt++)
-	{
-		Keyframe* key = &keyIt->second;
-		key->id = i;
-        
+
+    int i = 0;
+    for (KeyframeMapIterator keyIt = keyframesCache.begin(); keyIt != keyframesCache.end(); keyIt++)
+    {
+        Keyframe* key = &keyIt->second;
+        key->id = i;
+
         if (selectedKeyTimes.find(key->time) != selectedKeyTimes.end())
             key->selectedFromTool = true;
-        
-        //OVERRIDE: if we are drawing, we don't show the tangents to make perfomances faster
+
+        // OVERRIDE: ������ڻ���,����ʾ�������������
         if (isDrawing)
         {
             key->showInTangent = false;
             key->showOutTangent = false;
         }
-        
+
         ensureParentAndPivotMatrixAtTime(key->time);
-        
+
         key->position = getPos(key->time);
         key->worldPosition = multPosByParentMatrix(key->position, pMatrixCache[key->time]);
         if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
         {
+            if (!cachePtr) continue;
             cachePtr->ensureMatricesAtTime(key->time);
             key->worldPosition = MPoint(key->worldPosition) * cachePtr->matrixCache[key->time] * currentCameraMatrix;
         }
-        
-		key->inTangentWorld = multPosByParentMatrix((-key->inTangent) + key->position, pMatrixCache[key->time]);
-		key->outTangentWorld = multPosByParentMatrix(key->outTangent + key->position, pMatrixCache[key->time]);
-        
+
+        key->inTangentWorld = multPosByParentMatrix((-key->inTangent) + key->position, pMatrixCache[key->time]);
+        key->outTangentWorld = multPosByParentMatrix(key->outTangent + key->position, pMatrixCache[key->time]);
+
         if (key->showInTangent)
         {
             if (isWeighted)
@@ -680,57 +721,59 @@ void MotionPath::cacheKeyFrames(const MFnAnimCurve &curveTX, const MFnAnimCurve 
             {
                 double prevTime = key->time - TANGENT_TIME_DELTA;
                 ensureParentAndPivotMatrixAtTime(prevTime);
-                
+
                 MVector inWorldPosition;
                 if (GlobalSettings::motionPathDrawMode == GlobalSettings::kWorldSpace)
                     inWorldPosition = multPosByParentMatrix(getPos(prevTime), pMatrixCache[prevTime]) - key->worldPosition;
                 else
                 {
+                    if (!cachePtr) continue;
                     cachePtr->ensureMatricesAtTime(prevTime, true);
                     inWorldPosition = MVector(MPoint(multPosByParentMatrix(getPos(prevTime), pMatrixCache[prevTime])) * cachePtr->matrixCache[prevTime] * currentCameraMatrix) - key->worldPosition;
                 }
-                
+
                 inWorldPosition.normalize();
                 key->inTangentWorldFromCurve = inWorldPosition * key->inTangent.length() + key->worldPosition;
             }
         }
-    
+
         if (key->showOutTangent)
         {
             if (isWeighted)
-                 key->outTangentWorldFromCurve = key->outTangentWorld;
+                key->outTangentWorldFromCurve = key->outTangentWorld;
             else
             {
                 double afterTime = key->time + TANGENT_TIME_DELTA;
                 ensureParentAndPivotMatrixAtTime(afterTime);
-                
-                MVector outWorldPosition = multPosByParentMatrix(getPos(afterTime), pMatrixCache[afterTime]) - key->worldPosition;
+
+                MVector outWorldPosition;
                 if (GlobalSettings::motionPathDrawMode == GlobalSettings::kWorldSpace)
                     outWorldPosition = multPosByParentMatrix(getPos(afterTime), pMatrixCache[afterTime]) - key->worldPosition;
                 else
                 {
+                    if (!cachePtr) continue;
                     cachePtr->ensureMatricesAtTime(afterTime, true);
                     outWorldPosition = MVector(MPoint(multPosByParentMatrix(getPos(afterTime), pMatrixCache[afterTime])) * cachePtr->matrixCache[afterTime] * currentCameraMatrix) - key->worldPosition;
                 }
-                
+
                 outWorldPosition.normalize();
                 key->outTangentWorldFromCurve = outWorldPosition * key->outTangent.length() + key->worldPosition;
             }
         }
-        
-		i += 1;
-	}
+
+        i += 1;
+    }
 }
 
 void MotionPath::drawTangents(M3dView &view, MMatrix& currentCameraMatrix, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext)
 {
     if (isWeighted && GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
         return;
-    
+
     //if the user is navigating we don't refresh the tangents
     if ((QApplication::mouseButtons() != Qt::NoButton) && (QApplication::keyboardModifiers() == Qt::AltModifier))
         return;
-    
+
 	MColor tangentColor;
 	for(KeyframeMapIterator keyIt = keyframesCache.begin(); keyIt != keyframesCache.end(); keyIt++)
 	{
@@ -739,7 +782,7 @@ void MotionPath::drawTangents(M3dView &view, MMatrix& currentCameraMatrix, MHWRe
             tangentColor = GlobalSettings::weightedPathTangentColor;
         else
             tangentColor = key->tangentsLocked ? GlobalSettings::tangentColor : GlobalSettings::brokenTangentColor;
-        
+
         if (key->showInTangent)
         {
 			if (drawManager)
@@ -753,7 +796,7 @@ void MotionPath::drawTangents(M3dView &view, MMatrix& currentCameraMatrix, MHWRe
 				drawUtils::drawPointWithColor(key->inTangentWorldFromCurve, GlobalSettings::frameSize, tangentColor);
 			}
         }
-        
+
         if (key->showOutTangent)
 		{
 			if (drawManager)
@@ -772,32 +815,127 @@ void MotionPath::drawTangents(M3dView &view, MMatrix& currentCameraMatrix, MHWRe
 
 void MotionPath::drawFrameLabels(M3dView &view, CameraCache* cachePtr, const MMatrix &currentCameraMatrix, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext)
 {
-    MColor labelColor = GlobalSettings::frameLabelColor;
-    if(this->selectedFromTool)  labelColor *= 1.3;
-    
-	for(double i = displayStartTime; i <= displayEndTime; i += 1.0)
-	{
-        bool hasKey = false;
-        if (GlobalSettings::showKeyFrames)
-            hasKey = keyframesCache.find(i) != keyframesCache.end();
-        if (hasKey && !GlobalSettings::showKeyFrameNumbers)
-            continue;
-        else if (!hasKey && !GlobalSettings::showFrameNumbers)
-            continue;
-        
-   		MVector worldPos = multPosByParentMatrix(getPos(i), pMatrixCache[i]);
-        if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
-        {
-            cachePtr->ensureMatricesAtTime(i);
-            worldPos = MPoint(worldPos) * cachePtr->matrixCache[i] * currentCameraMatrix;
-        }
-        
-        double offset = hasKey ? 1.1 : 0.8;
+    MColor frameLabelColor = GlobalSettings::frameLabelColor;
+    MColor keyframeLabelColor = GlobalSettings::keyframeLabelColor;
+    if(this->selectedFromTool) {
+        frameLabelColor *= 1.3;
+        keyframeLabelColor *= 1.3;
+    }
 
-		if (drawManager)
-			VP2DrawUtils::drawFrameLabel(i, worldPos, view, offset, labelColor, currentCameraMatrix, drawManager, frameContext);
-		else
-			drawUtils::drawFrameLabel(i, worldPos, view, offset, labelColor, currentCameraMatrix);
+	// When showing key numbers, we need to check all keyframes regardless of drawFrameInterval
+	// Otherwise keyframes between interval steps will be missed
+	if (GlobalSettings::showKeyFrameNumbers)
+	{
+		// Draw key frame numbers at actual keyframe positions
+		for(KeyframeMapIterator keyIt = keyframesCache.begin(); keyIt != keyframesCache.end(); keyIt++)
+		{
+			double keyTime = keyIt->first;
+			if (keyTime < displayStartTime || keyTime > displayEndTime)
+				continue;
+
+			ensureParentAndPivotMatrixAtTime(keyTime);
+			MVector worldPos = multPosByParentMatrix(getPos(keyTime), pMatrixCache[keyTime]);
+			if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
+			{
+				if (!cachePtr) continue;
+				cachePtr->ensureMatricesAtTime(keyTime);
+				worldPos = MPoint(worldPos) * cachePtr->matrixCache[keyTime] * currentCameraMatrix;
+			}
+
+			// Use keyframeLabelSize and keyframeLabelColor for keyframe numbers
+			if (drawManager)
+				VP2DrawUtils::drawFrameLabel(keyTime, worldPos, view, GlobalSettings::keyframeLabelSize, keyframeLabelColor, currentCameraMatrix, drawManager, frameContext);
+			else
+				drawUtils::drawFrameLabel(keyTime, worldPos, view, GlobalSettings::keyframeLabelSize, keyframeLabelColor, currentCameraMatrix);
+		}
+	}
+
+	// Draw regular frame numbers at interval steps (only if enabled)
+	if (GlobalSettings::showFrameNumbers)
+	{
+//		// Always show start and end frame numbers, then fill in between with interval
+		int frameInterval = GlobalSettings::drawFrameInterval;
+		if (frameInterval < 1) frameInterval = 1;
+//
+//		// Draw start frame (if not a keyframe or not showing keyframe numbers)
+		bool skipStart = false;
+		if (GlobalSettings::showKeyFrameNumbers && GlobalSettings::showKeyFrames)
+		{
+			skipStart = keyframesCache.find(displayStartTime) != keyframesCache.end();
+		}
+		if (!skipStart)
+		{
+			ensureParentAndPivotMatrixAtTime(displayStartTime);
+			MVector worldPos = multPosByParentMatrix(getPos(displayStartTime), pMatrixCache[displayStartTime]);
+			if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
+			{
+				if (cachePtr) {
+					cachePtr->ensureMatricesAtTime(displayStartTime);
+					worldPos = MPoint(worldPos) * cachePtr->matrixCache[displayStartTime] * currentCameraMatrix;
+				}
+			}
+			// Use frameLabelSize and frameLabelColor for regular frame numbers
+			if (drawManager)
+				VP2DrawUtils::drawFrameLabel(displayStartTime, worldPos, view, GlobalSettings::frameLabelSize, frameLabelColor, currentCameraMatrix, drawManager, frameContext);
+			else
+				drawUtils::drawFrameLabel(displayStartTime, worldPos, view, GlobalSettings::frameLabelSize, frameLabelColor, currentCameraMatrix);
+		}
+
+		// Draw intermediate frames at intervals
+		for(double i = displayStartTime + frameInterval; i < displayEndTime; i += frameInterval)
+		{
+			// Skip if this is a keyframe and we're showing keyframe numbers
+			if (GlobalSettings::showKeyFrameNumbers && GlobalSettings::showKeyFrames)
+			{
+				bool hasKey = keyframesCache.find(i) != keyframesCache.end();
+				if (hasKey)
+					continue;
+			}
+
+			ensureParentAndPivotMatrixAtTime(i);
+			MVector worldPos = multPosByParentMatrix(getPos(i), pMatrixCache[i]);
+			if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
+			{
+				if (cachePtr) {
+					cachePtr->ensureMatricesAtTime(i);
+					worldPos = MPoint(worldPos) * cachePtr->matrixCache[i] * currentCameraMatrix;
+				}
+			}
+
+			// Use frameLabelSize and frameLabelColor for regular frame numbers
+			if (drawManager)
+				VP2DrawUtils::drawFrameLabel(i, worldPos, view, GlobalSettings::frameLabelSize, frameLabelColor, currentCameraMatrix, drawManager, frameContext);
+			else
+				drawUtils::drawFrameLabel(i, worldPos, view, GlobalSettings::frameLabelSize, frameLabelColor, currentCameraMatrix);
+		}
+
+		// Draw end frame (if not a keyframe or not showing keyframe numbers, and not same as start)
+		if (displayEndTime > displayStartTime)
+		{
+
+			bool skipEnd = false;
+			if (GlobalSettings::showKeyFrameNumbers && GlobalSettings::showKeyFrames)
+			{
+				skipEnd = keyframesCache.find(displayEndTime) != keyframesCache.end();
+			}
+			if (!skipEnd)
+			{
+				ensureParentAndPivotMatrixAtTime(displayEndTime);
+				MVector worldPos = multPosByParentMatrix(getPos(displayEndTime), pMatrixCache[displayEndTime]);
+				if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
+				{
+					if (cachePtr) {
+						cachePtr->ensureMatricesAtTime(displayEndTime);
+						worldPos = MPoint(worldPos) * cachePtr->matrixCache[displayEndTime] * currentCameraMatrix;
+					}
+				}
+				// Use frameLabelSize and frameLabelColor for regular frame numbers
+				if (drawManager)
+					VP2DrawUtils::drawFrameLabel(displayEndTime, worldPos, view, GlobalSettings::frameLabelSize, frameLabelColor, currentCameraMatrix, drawManager, frameContext);
+				else
+					drawUtils::drawFrameLabel(displayEndTime, worldPos, view, GlobalSettings::frameLabelSize, frameLabelColor, currentCameraMatrix);
+			}
+		}
 	}
 }
 
@@ -805,23 +943,24 @@ void MotionPath::drawCurrentFrame(CameraCache* cachePtr, const MMatrix &currentC
 {
 	MColor frameColor = GlobalSettings::currentFrameColor;
 	if(this->selectedFromTool)		frameColor *= 1.3;
-    
+
 	MTime currentTime = MAnimControl::currentTime();
 	double currentTimeValue = currentTime.as(MTime::uiUnit());
-    
+
     ensureParentAndPivotMatrixAtTime(currentTimeValue);
-    
+
     MVector worldPos = multPosByParentMatrix(getPos(currentTimeValue), this->pMatrixCache[currentTimeValue]);
     if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
     {
+        if (!cachePtr) return;
         cachePtr->ensureMatricesAtTime(currentTimeValue);
         worldPos = MPoint(worldPos) * cachePtr->matrixCache[currentTimeValue] * currentCameraMatrix;
-    } 
-    
-	if (drawManager) 
-		VP2DrawUtils::drawPointWithColor(worldPos, GlobalSettings::frameSize * 2.2, frameColor, currentCameraMatrix, drawManager, frameContext);
+    }
+
+	if (drawManager)
+		VP2DrawUtils::drawPointWithColor(worldPos, GlobalSettings::frameSize * GlobalSettings::CURRENT_FRAME_SIZE_MULTIPLIER, frameColor, currentCameraMatrix, drawManager, frameContext);
 	else
-		drawUtils::drawPointWithColor(worldPos, GlobalSettings::frameSize * 2.2, frameColor);
+		drawUtils::drawPointWithColor(worldPos, GlobalSettings::frameSize * GlobalSettings::CURRENT_FRAME_SIZE_MULTIPLIER, frameColor);
 }
 
 void MotionPath::drawPath(M3dView &view, CameraCache* cachePtr, const MMatrix &currentCameraMatrix, const bool selecting, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext)
@@ -875,14 +1014,15 @@ void MotionPath::draw(M3dView &view, CameraCache* cachePtr, MHWRender::MUIDrawMa
             setWorldSpaceCallbackCalled(false, MObject());
         }
     }
-    
+
     MMatrix currentCameraMatrix;
     if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
     {
+        if (!cachePtr) return;
         double currentTime = MAnimControl::currentTime().as(MTime::uiUnit());
         currentCameraMatrix = cachePtr->matrixCache[currentTime].inverse();
     }
-    
+
     if (!constrained)
     {
         xUpdated = animCurveUtils::updateCurve(txPlug, curveX, currentTime, oldXValue, newXValue, newKeyX, oldKeyX);
@@ -980,7 +1120,8 @@ void MotionPath::deleteKeyFramesBetweenTimes(const double startTime, const doubl
     for (int i = curve.numKeys() - 1; i >= 0; --i)
     {
         double t = curve.time(i).as(MTime::uiUnit());
-        if (t > startTime && t < endTime)
+        // Delete keys in (startTime, endTime] - excluding start, including end
+        if (t > startTime && t <= endTime)
             curve.remove(i, change);
     }
 }
@@ -990,10 +1131,39 @@ void MotionPath::deleteAllKeyFramesAfterTime(const double time, MAnimCurveChange
     MFnAnimCurve curveX(txPlug);
 	MFnAnimCurve curveY(tyPlug);
 	MFnAnimCurve curveZ(tzPlug);
-    
+    MFnAnimCurve curveRX(rxPlug);
+    MFnAnimCurve curveRY(ryPlug);
+    MFnAnimCurve curveRZ(rzPlug);
+
+    // Delete translation keyframes after time
     deleteKeyFramesAfterTime(time, curveX, change);
     deleteKeyFramesAfterTime(time, curveY, change);
     deleteKeyFramesAfterTime(time, curveZ, change);
+
+    // Delete rotation keyframes after time
+    deleteKeyFramesAfterTime(time, curveRX, change);
+    deleteKeyFramesAfterTime(time, curveRY, change);
+    deleteKeyFramesAfterTime(time, curveRZ, change);
+}
+
+void MotionPath::deleteAllKeyFramesInRange(const double startTime, const double endTime, MAnimCurveChange *change)
+{
+    MFnAnimCurve curveX(txPlug);
+    MFnAnimCurve curveY(tyPlug);
+    MFnAnimCurve curveZ(tzPlug);
+    MFnAnimCurve curveRX(rxPlug);
+    MFnAnimCurve curveRY(ryPlug);
+    MFnAnimCurve curveRZ(rzPlug);
+
+    // Delete translation keyframes in range
+    deleteKeyFramesBetweenTimes(startTime, endTime, curveX, change);
+    deleteKeyFramesBetweenTimes(startTime, endTime, curveY, change);
+    deleteKeyFramesBetweenTimes(startTime, endTime, curveZ, change);
+
+    // Delete rotation keyframes in range
+    deleteKeyFramesBetweenTimes(startTime, endTime, curveRX, change);
+    deleteKeyFramesBetweenTimes(startTime, endTime, curveRY, change);
+    deleteKeyFramesBetweenTimes(startTime, endTime, curveRZ, change);
 }
 
 void MotionPath::getKeyWorldPosition(const double keyTime, MVector &keyWorldPosition)
@@ -1012,18 +1182,31 @@ void MotionPath::deleteKeyFrameWithId(const int id, MAnimCurveChange *change)
     MFnAnimCurve curveX(txPlug);
 	MFnAnimCurve curveY(tyPlug);
 	MFnAnimCurve curveZ(tzPlug);
-    
+    MFnAnimCurve curveRX(rxPlug);
+    MFnAnimCurve curveRY(ryPlug);
+    MFnAnimCurve curveRZ(rzPlug);
+
     for(KeyframeMapIterator keyIt = keyframesCache.begin(); keyIt != keyframesCache.end(); keyIt++)
 	{
 		Keyframe* key = &keyIt->second;
 		if(key->id == id)
         {
+            // Delete translation keyframes
             if (key->xKeyId != -1)
                 curveX.remove(key->xKeyId, change);
             if (key->yKeyId != -1)
                 curveY.remove(key->yKeyId, change);
             if (key->zKeyId != -1)
                 curveZ.remove(key->zKeyId, change);
+
+            // Delete rotation keyframes
+            if (key->xRotKeyId != -1)
+                curveRX.remove(key->xRotKeyId, change);
+            if (key->yRotKeyId != -1)
+                curveRY.remove(key->yRotKeyId, change);
+            if (key->zRotKeyId != -1)
+                curveRZ.remove(key->zRotKeyId, change);
+
             return;
         }
 	}
@@ -1034,35 +1217,58 @@ void MotionPath::deleteKeyFrameAtTime(const double time, MAnimCurveChange *chang
     MFnAnimCurve curveX(txPlug);
     MFnAnimCurve curveY(tyPlug);
     MFnAnimCurve curveZ(tzPlug);
-    
+    MFnAnimCurve curveRX(rxPlug);
+    MFnAnimCurve curveRY(ryPlug);
+    MFnAnimCurve curveRZ(rzPlug);
+
     if (!useCache)
     {
         MTime mtime(time, MTime::uiUnit());
-        unsigned int xKeyID, yKeyID, zKeyID;
-        
+        unsigned int xKeyID, yKeyID, zKeyID, rxKeyID, ryKeyID, rzKeyID;
+
+        // Delete translation keyframes
         if (curveX.find(mtime, xKeyID))
             curveX.remove(xKeyID, change);
-        
+
         if (curveY.find(mtime, yKeyID))
             curveY.remove(yKeyID, change);
-        
+
         if (curveZ.find(mtime, zKeyID))
             curveZ.remove(zKeyID, change);
-        
+
+        // Delete rotation keyframes
+        if (curveRX.find(mtime, rxKeyID))
+            curveRX.remove(rxKeyID, change);
+
+        if (curveRY.find(mtime, ryKeyID))
+            curveRY.remove(ryKeyID, change);
+
+        if (curveRZ.find(mtime, rzKeyID))
+            curveRZ.remove(rzKeyID, change);
+
         return;
     }
-    
+
     KeyframeMapIterator keyIt = keyframesCache.find(time);
 	if(keyIt != keyframesCache.end())
 	{
 		Keyframe* key = &keyIt->second;
-        
+
+        // Delete translation keyframes
         if (key->xKeyId != -1)
             curveX.remove(key->xKeyId, change);
         if (key->yKeyId != -1)
             curveY.remove(key->yKeyId, change);
         if (key->zKeyId != -1)
             curveZ.remove(key->zKeyId, change);
+
+        // Delete rotation keyframes
+        if (key->xRotKeyId != -1)
+            curveRX.remove(key->xRotKeyId, change);
+        if (key->yRotKeyId != -1)
+            curveRY.remove(key->yRotKeyId, change);
+        if (key->zRotKeyId != -1)
+            curveRZ.remove(key->zRotKeyId, change);
 	}
 }
 
@@ -1165,32 +1371,50 @@ void MotionPath::offsetWorldPosition(const MVector &offset, const double time, M
     }
 }
 
-void MotionPath::copyKeyFrameFromToOnCurve(MFnAnimCurve &curve, int keyId, double value, double time, MAnimCurveChange *change)
+void MotionPath::copyKeyFrameFromToOnCurve(MFnAnimCurve& curve, int keyId, double value, double time, MAnimCurveChange* change)
 {
-    double inW, outW;
+    // keyId ��������Ϊ int ���� ����ת��Ϊ unsigned int ���� API ����
+    unsigned int uKeyId = static_cast<unsigned int>(keyId);
+
+    double inW = 0.0, outW = 0.0;
     MAngle inAngle, outAngle;
 
-    curve.getTangent(keyId, inAngle, inW, true);
-    curve.getTangent(keyId, outAngle, outW, false);
-    
-    bool tangentsLocked = curve.tangentsLocked(keyId);
-    bool weightLocked = curve.weightsLocked(keyId);
-    
-    MFnAnimCurve::TangentType tin = curve.inTangentType(keyId);
-    MFnAnimCurve::TangentType tout = curve.outTangentType(keyId);
- 
-    curve.remove(keyId, change);
-    
+    // ��ȷʹ�� getTangent������ angle (MAngle&) �� weight (double&)�����һ������Ϊ bool inTangent
+    MStatus status;
+    status = curve.getTangent(uKeyId, inAngle, inW, true);   // in tangent
+    if (!status) {
+        // ��ѡ����ӡ�����������
+        MGlobal::displayWarning("getTangent (in) failed for keyId " + MString() + uKeyId);
+    }
+    status = curve.getTangent(uKeyId, outAngle, outW, false); // out tangent
+    if (!status) {
+        MGlobal::displayWarning("getTangent (out) failed for keyId " + MString() + uKeyId);
+    }
+
+    bool tangentsLocked = curve.tangentsLocked(uKeyId);
+    bool weightLocked = curve.weightsLocked(uKeyId);
+
+    MFnAnimCurve::TangentType tin = curve.inTangentType(uKeyId);
+    MFnAnimCurve::TangentType tout = curve.outTangentType(uKeyId);
+
+    // ɾ��ԭ key����ı� key ���������Ժ���Ҫ�������ӣ�
+    curve.remove(uKeyId, change);
+
+    // �����µ� key��ע�� addKey ���� MTime��
     MTime mtime;
-    mtime.setValue(time);
-    int newKeyId = curve.addKey(mtime, value, tin, tout, change);
-    
+    mtime.setValue(time); // time in seconds (����ԭʵ��һ��)
+    unsigned int newKeyId = curve.addKey(mtime, value, tin, tout, change);
+
+    // �ָ� locked ״̬��ע�� API �� setTangentsLocked/ setWeightsLocked ��ǩ����
     curve.setTangentsLocked(newKeyId, tangentsLocked, change);
     curve.setWeightsLocked(newKeyId, weightLocked, change);
-    
+
+    // �������ߣ�ʹ�� angle + weight ��ʽ��
     curve.setTangent(newKeyId, inAngle, inW, true, change);
     if (!tangentsLocked)
+    {
         curve.setTangent(newKeyId, outAngle, outW, false, change);
+    }
 }
 
 void MotionPath::copyKeyFrameFromTo(const double from, const double to, const MVector &cachedPosition, MAnimCurveChange *change)
@@ -1271,42 +1495,54 @@ void MotionPath::setTangentWorldPosition(const MVector &position, const double t
     setTangentValue(localPosition.z, key->zKeyId, cz, tangentId, mtime, change);
 }
 
-void MotionPath::setTangentValue(float value, int key, MFnAnimCurve &curve, Keyframe::Tangent tangentId, const MTime &time, MAnimCurveChange *change)
+void MotionPath::setTangentValue(float value, int key, MFnAnimCurve& curve, Keyframe::Tangent tangentId, const MTime& time, MAnimCurveChange* change)
 {
-	unsigned int index;
-	if(curve.numKeys() <= 1 || !curve.find(time, index))
-		return;
-    
-	if(tangentId == Keyframe::kInTangent)
-		value = -value;
-    
-	if(!curve.isWeighted())
-	{
-		MAngle tmpAngle; double w;
-		curve.getTangent(key, tmpAngle, w, (bool)tangentId);
-        
-		MAngle angle(atan(value*w));
-		curve.setTangent(key, angle, w, (bool)tangentId, change);
-	}
-	else
-	{
+    // ��ȷ�������ϴ��ڸ�֡��Ӧ�� key index���� time ���ң�
+    unsigned int index = 0;
+    if (curve.numKeys() <= 1 || !curve.find(time, index))
+        return;
 
-#if MAYA_API_VERSION >= 201800
-		MFnAnimCurve::TangentValue x, y;
-#else
-		float x, y;
-#endif
-		curve.getTangent(key, x, y, (bool)tangentId);
-        
-        // x is constant
+    // ������� tangentId תΪ��ȷ�� bool��in / out��
+    bool isIn = (tangentId == Keyframe::kInTangent);
+    if (isIn)
+        value = -value;
+
+    // ������߲��� weighted��ʹ�� angle + weight ����
+    if (!curve.isWeighted())
+    {
+        MAngle angle;
+        double w = 0.0;
+        MStatus stat = curve.getTangent(index, angle, w, isIn);
+        if (!stat) {
+            // ��ȡʧ���򲻼���
+            return;
+        }
+
+        // �����µ� angle��atan(value * weight)��
+        MAngle newAngle(atan(static_cast<double>(value) * w));
+        curve.setTangent(index, newAngle, w, isIn, change);
+    }
+    else
+    {
+        // weighted ����ʹ�� x,y ��ʽ
+        MFnAnimCurve::TangentValue x = 0.0, y = 0.0;
+        MStatus stat = curve.getTangent(index, x, y, isIn);
+        if (!stat) {
+            return;
+        }
+
+        // x �ĵ�λת������������������һ�£��Ѵ洢�� x ת��Ϊ UI ʱ�䵥λ��
         MTime convert(1.0, MTime::kSeconds);
-		x *= (float) convert.as(MTime::uiUnit());
-        
-        y = value * 3.0;
-        
-		curve.setTangent(key, x, y, (bool)tangentId, change);
-	}
+        MFnAnimCurve::TangentValue x_ui = static_cast<MFnAnimCurve::TangentValue>(x * static_cast<MFnAnimCurve::TangentValue>(convert.as(MTime::uiUnit())));
+
+        // �µ� y����ԭ�߼��� value * 3.0��
+        MFnAnimCurve::TangentValue newY = static_cast<MFnAnimCurve::TangentValue>(value * 3.0);
+
+        // д�أ�ʹ�� converted x_ui ���� x ���䣬��д�� y
+        curve.setTangent(index, x_ui, newY, isIn, change);
+    }
 }
+
 
 void MotionPath::getTangentHandleWorldPosition(const double keyTime, const Keyframe::Tangent &tangentName, MVector &tangentWorldPosition)
 {
@@ -1397,10 +1633,11 @@ void MotionPath::drawCurvesForSelection(M3dView &view, CameraCache* cachePtr)
     MMatrix currentCameraMatrix;
     if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
     {
+        if (!cachePtr) return;
         double currentTime = MAnimControl::currentTime().as(MTime::uiUnit());
         currentCameraMatrix = cachePtr->matrixCache[currentTime].inverse();
     }
-    
+
     drawPath(view, cachePtr, currentCameraMatrix, true);
 }
 
@@ -1508,7 +1745,11 @@ BufferPath MotionPath::createBufferPath()
     }
     
     bp.setFrames(frames);
-    
+
+    // Set object name for identification
+    MFnDependencyNode depNodeFn(thisObject);
+    bp.setObjectName(depNodeFn.name());
+
     return bp;
 }
 
@@ -1609,28 +1850,36 @@ void cleanExtraKeysForClipboard(MFnAnimCurve &curve, const MIntArray &keys)
     }
 }
 
-double getTangentValueForClipboard(MFnAnimCurve &curve, const int keyID, bool inTangent)
+double getTangentValueForClipboard(const MFnAnimCurve& curve, const int keyID, bool inTangent)
 {
-	if(!curve.isWeighted())
-	{
-		MAngle angle;
-		double w1;
-		curve.getTangent(keyID, angle, w1, inTangent);
-		return tan(angle.asRadians()) * w1;
-	}
-	else
-	{
-#if MAYA_API_VERSION >= 201800
-		MFnAnimCurve::TangentValue x, y;
-#else
-		float x, y;
-#endif
-        curve.getTangent(keyID, x, y, inTangent);
-		return y / 3.0; // divide by the number of curves
-	}
+    unsigned int uKey = static_cast<unsigned int>(keyID);
+
+    if (!curve.isWeighted())
+    {
+        double w = 0.0;
+        MAngle angle;
+        // ע�⣺getTangent ���� MStatus��ͨ�����÷��� angle �� weight
+        MStatus stat = const_cast<MFnAnimCurve&>(curve).getTangent(uKey, angle, w, inTangent);
+        if (!stat) {
+            return 0.0;
+        }
+        // ʹ�� angle�����ȣ������� tan(angle) * weight
+        return tan(angle.asRadians()) * w;
+    }
+    else
+    {
+        MFnAnimCurve::TangentValue x = 0.0, y = 0.0;
+        MStatus stat = const_cast<MFnAnimCurve&>(curve).getTangent(uKey, x, y, inTangent);
+        if (!stat) {
+            return 0.0;
+        }
+        // ��д��ʱ��Ӧ��y �洢Ϊ value * 3.0����˶�ȡʱ���� 3.0
+        return static_cast<double>(y / static_cast<MFnAnimCurve::TangentValue>(3.0));
+    }
 }
 
-MVector evaluateTangentForClipboard(MFnAnimCurve &cx, MFnAnimCurve &cy, MFnAnimCurve &cz, const int xKeyID, const int yKeyID, const int zKeyID, const bool inTangent)
+
+MVector evaluateTangentForClipboard(const MFnAnimCurve &cx, MFnAnimCurve &cy, MFnAnimCurve &cz, const int xKeyID, const int yKeyID, const int zKeyID, const bool inTangent)
 {
     MVector tangent(0,0,0);
     if (xKeyID != -1)
@@ -1642,7 +1891,7 @@ MVector evaluateTangentForClipboard(MFnAnimCurve &cx, MFnAnimCurve &cy, MFnAnimC
     return tangent;
 }
 
-bool isCurveBoundaryKey(MFnAnimCurve &curve, const MTime &time)
+bool isCurveBoundaryKey(const MFnAnimCurve &curve, const MTime &time)
 {
     unsigned int keyID;
     if (!curve.find(time, keyID))
@@ -1650,7 +1899,7 @@ bool isCurveBoundaryKey(MFnAnimCurve &curve, const MTime &time)
     return keyID == 0 || keyID == curve.numKeys() - 1;
 }
 
-void restoreTangents(MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
+void restoreTangents(const MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
 {
     for (unsigned int index = 0; index < fnSource.numKeys(); ++index)
     {
@@ -1658,11 +1907,7 @@ void restoreTangents(MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
         unsigned int keyID;
         if (fnDest.find(time, keyID))
         {
-#if MAYA_API_VERSION >= 201800
 			MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
-#else
-			float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
-#endif
             
             fnSource.getTangent(index, inXTangentValue, inYTangentValue, true);
             fnSource.getTangent(index, outXTangentValue, outYTangentValue, false);
@@ -1687,11 +1932,7 @@ void copyKeys(MFnAnimCurve &fnSource, MFnAnimCurve &fnDest)
         MFnAnimCurve::TangentType inTType = fnSource.inTangentType(index);
         MFnAnimCurve::TangentType outTType = fnSource.outTangentType(index);
         
-#if MAYA_API_VERSION >= 201800
 		MFnAnimCurve::TangentValue inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
-#else
-		float inXTangentValue, inYTangentValue, outXTangentValue, outYTangentValue;
-#endif
         fnSource.getTangent(index, inXTangentValue, inYTangentValue, true);
         fnSource.getTangent(index, outXTangentValue, outYTangentValue, false);
         
@@ -1875,7 +2116,7 @@ void MotionPath::storeSelectedKeysInClipboard()
     modifier.undoIt();
 }
 
-bool breakTangentsForKeyCopy(MFnAnimCurve &curve, const double time, const bool lastKey)
+bool breakTangentsForKeyCopy(const MFnAnimCurve &curve, const double time, const bool lastKey)
 {
     return curve.numKeys() > 0 && curve.time(0).as(MTime::uiUnit()) < time && (curve.time(curve.numKeys() - 1).as(MTime::uiUnit()) > time || !lastKey);
 }

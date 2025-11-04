@@ -6,8 +6,6 @@
 //
 //
 
-#include "PlatformFixes.h"
-
 #include "Vp2DrawUtils.h"
 #include <maya/MPointArray.h>
 
@@ -82,14 +80,14 @@ void VP2DrawUtils::drawKeyFrames(std::vector<Keyframe *> keys, const float size,
 
 		std::vector<Keyframe::Axis> tAxis, rAxis;
 		key->getKeyTranslateAxis(tAxis);
-		//std::cout << key->time << std::endl;
-		if (tAxis.size() < 1)
-		{
-			//std::cout << "axis 0 " << key->time << std::endl;
-			continue;
-		}
 		if (showRotationKeyframes)
 			key->getKeyRotateAxis(rAxis);
+
+		// Fix: Show keyframe if EITHER translation OR rotation has any axis keyed
+		if (tAxis.size() < 1 && rAxis.size() < 1)
+		{
+			continue; // Skip only if BOTH are empty
+		}
 
 		double blackBackgroundFactor = 1.2;
 		MColor color(0.0, 0.0, 0.0);
@@ -107,14 +105,26 @@ void VP2DrawUtils::drawKeyFrames(std::vector<Keyframe *> keys, const float size,
 		}
 		else
 		{
-			double stepSize = size / 2 / tAxis.size();
-			for (int i = 0; i < tAxis.size(); ++i)
+			// Fix: Use combined axis list (translation + rotation) for coloring
+			std::vector<Keyframe::Axis> combinedAxis = tAxis;
+
+			// If no translation keys, use rotation keys for coloring
+			if (tAxis.size() == 0 && rAxis.size() > 0)
 			{
-				Keyframe::getColorForAxis(tAxis[i], color);
+				combinedAxis = rAxis;
+			}
+
+			int axisCount = static_cast<int>(combinedAxis.size());
+			if (axisCount < 1) axisCount = 1; // Safety: prevent division by zero
+
+			double stepSize = size / 2.0 / axisCount;
+			for (int i = 0; i < axisCount; ++i)
+			{
+				Keyframe::getColorForAxis(combinedAxis[i], color);
 				color *= colorMultiplier;
 
 				drawManager->setColor(color);
-				drawManager->circle2d(MPoint(centerX, centerY), stepSize * (tAxis.size() - i), true);
+				drawManager->circle2d(MPoint(centerX, centerY), stepSize * (axisCount - i), true);
 			}
 
 			/*
@@ -224,9 +234,15 @@ void VP2DrawUtils::drawFrameLabel(double frame, const MVector &framePos, M3dView
 	if ((cPos - framePos) * zVec  <= 0.0001)
 		return;
 
-	drawManager->setFontSize(MHWRender::MUIDrawManager::kDefaultFontSize);
-	drawManager->setColor(color);
-	
+    unsigned int fontPixelSize = static_cast<unsigned int>(14.0 * sizeOffset);
+    if (fontPixelSize < 6)
+        fontPixelSize = 6;  // 避免过小
+    if (fontPixelSize > 64)
+        fontPixelSize = 64; // 避免过大导致绘制异常
+
+    drawManager->setFontSize(fontPixelSize);
+    drawManager->setColor(color);
+
 	double viewX, viewY;
 	frameContext->worldToViewport(framePos, viewX, viewY);
 

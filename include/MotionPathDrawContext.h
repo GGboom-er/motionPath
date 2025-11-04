@@ -62,11 +62,17 @@ private:
     bool doPressCommon(MEvent &event, const bool old);
     bool doDragCommon(MEvent &event, const bool old);
     bool doReleaseCommon(MEvent &event, const bool old);
-    
+
     int getStrokeDirection(MVector directionalVector, const MDoubleArray &keys, const int selectedIndex);
     MVector getkeyScreenPosition(const double index);
     MVector getClosestPointOnPolyLine(const MVector &q);
     MVector getSpreadPointOnPolyLine(const int i, const int pointSize, const double strokeLenght, const std::vector<double> &segmentLenghts);
+
+    // Preview drawing helpers
+    void drawPreviewPath();
+    void drawPreviewKeyframes();
+    MVector samplePointOnPath(double t, const MVectorArray &points, double totalLength);
+    double calculatePathLength(const MVectorArray &points);
     
     MotionPath* selectedMotionPathPtr;
     DrawMode currentMode;

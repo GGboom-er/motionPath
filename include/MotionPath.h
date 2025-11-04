@@ -86,6 +86,7 @@ class MotionPath
         void copyKeyFrameFromTo(const double from, const double to, const MVector &cachedPosition, MAnimCurveChange *change);
     
         void deleteAllKeyFramesAfterTime(const double time, MAnimCurveChange *change);
+        void deleteAllKeyFramesInRange(const double startTime, const double endTime, MAnimCurveChange *change);
         void deleteKeyFramesBetweenTimes(const double startTime, const double endTime, MFnAnimCurve &curve, MAnimCurveChange *change);
     
         void getBoundariesForTime(const double time, double *minBoundary, double *maxBoundary);
@@ -161,9 +162,18 @@ class MotionPath
         bool isConstrained(const MFnDagNode &dagNodeFn);
         void findParentMatrixPlug(const MObject &transform, const bool isConstrained, MPlug &matrixPlug);
         void findPivotPlugs(MFnDependencyNode &depNodFn);
-        void expandKeyFramesCache(MFnAnimCurve &curve, const Keyframe::Axis &axisName, bool isTranslate);
-        void cacheKeyFrames(MFnAnimCurve &curveTX, MFnAnimCurve &curveTY, MFnAnimCurve &curveTZ, MFnAnimCurve &curveRX, MFnAnimCurve &curveRY, MFnAnimCurve &curveRZ, CameraCache* cachePtr, const MMatrix &currentCameraMatrix);
-        void setShowInOutTangents(MFnAnimCurve &curveTX, MFnAnimCurve &curveTY, MFnAnimCurve &curveTZ);
+        // MotionPath.h
+        void expandKeyFramesCache(MFnAnimCurve& curve, const Keyframe::Axis& axisName, bool isTranslate);
+        //                        ^^^^^^^^^^^^^ �Ƴ�const
+        void cacheKeyFrames(MFnAnimCurve& curveTX,
+            MFnAnimCurve& curveTY,
+            MFnAnimCurve& curveTZ,
+            MFnAnimCurve& curveRX,
+            MFnAnimCurve& curveRY,
+            MFnAnimCurve& curveRZ,
+            CameraCache* cachePtr,
+            const MMatrix& currentCameraMatrix);
+        void setShowInOutTangents(const MFnAnimCurve &curveTX, const MFnAnimCurve &curveTY, const MFnAnimCurve &curveTZ);
         bool showTangent(const double time, const int firstId, const double firstTime, const int secondId, const double secondTime);
     
         void copyKeyFrameFromToOnCurve(MFnAnimCurve &curve, int keyId, double value, double time, MAnimCurveChange *change);

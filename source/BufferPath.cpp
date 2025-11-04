@@ -6,8 +6,6 @@
 //
 //
 
-#include "PlatformFixes.h"
-
 #include "BufferPath.h"
 #include "GlobalSettings.h"
 #include "DrawUtils.h"
@@ -24,15 +22,26 @@ void BufferPath::drawFrames(const double startTime, const double endTime, const 
     int frameSize = frames.size();
 
     if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
+    {
+        if (!cachePtr) return;
         cachePtr->ensureMatricesAtTime(startTime);
-    
+    }
+
+    // Performance optimization: Collect vertices for batch drawing
+    std::vector<MVector> lineVertices;
+    std::vector<MVector> pointVertices;
+
+    if (GlobalSettings::showPath)
+        lineVertices.reserve(static_cast<size_t>((endTime - startTime + 1) * 2));
+    pointVertices.reserve(static_cast<size_t>(endTime - startTime + 2));
+
 	for(double i = startTime + 1; i <= endTime; i += 1.0)
 	{
         if (i <= minTime || i >= minTime + frameSize)
             continue;
-        
+
         int index = static_cast<int>(i - minTime);
-        
+
         MVector pos1 = frames[index];
         MVector pos2 = frames[index-1];
         if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
@@ -41,28 +50,43 @@ void BufferPath::drawFrames(const double startTime, const double endTime, const 
             pos1 = MPoint(pos1) * cachePtr->matrixCache[i] * currentCameraMatrix;
             pos2 = MPoint(pos2) * cachePtr->matrixCache[i-1] * currentCameraMatrix;
         }
-        
+
 		if (GlobalSettings::showPath)
 		{
+            // For VP2, still draw individually (VP2 has its own batching)
 			if (drawManager)
 				VP2DrawUtils::drawLineWithColor(pos1, pos2, GlobalSettings::pathSize, curveColor, currentCameraMatrix, drawManager, frameContext);
 			else
-				drawUtils::drawLineWithColor(pos1, pos2, GlobalSettings::pathSize, curveColor);
+            {
+                // Batch lines for legacy OpenGL
+                lineVertices.push_back(pos2);
+                lineVertices.push_back(pos1);
+            }
 		}
-        
+
 		if (drawManager)
 			VP2DrawUtils::drawPointWithColor(pos2, GlobalSettings::frameSize, curveColor, currentCameraMatrix, drawManager, frameContext);
 		else
-			drawUtils::drawPointWithColor(pos2, GlobalSettings::frameSize, curveColor);
+            pointVertices.push_back(pos2);
 
         if (i == endTime || i == minTime + frameSize - 1)
 		{
 			if (drawManager)
 				VP2DrawUtils::drawPointWithColor(pos1, GlobalSettings::frameSize, curveColor, currentCameraMatrix, drawManager, frameContext);
 			else
-				drawUtils::drawPointWithColor(pos1, GlobalSettings::frameSize, curveColor);
+                pointVertices.push_back(pos1);
 		}
 	}
+
+    // Batch draw for legacy OpenGL
+    if (!drawManager)
+    {
+        if (GlobalSettings::showPath && !lineVertices.empty())
+            drawUtils::drawLineArray(lineVertices, GlobalSettings::pathSize, curveColor);
+
+        if (!pointVertices.empty())
+            drawUtils::drawPointArray(pointVertices, GlobalSettings::frameSize, curveColor);
+    }
 }
 
 void BufferPath::drawKeyFrames(const double startTime, const double endTime, const MColor &curveColor, CameraCache* cachePtr, const MMatrix &currentCameraMatrix, M3dView &view, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext)
@@ -75,6 +99,7 @@ void BufferPath::drawKeyFrames(const double startTime, const double endTime, con
             MVector pos = keyIt->second;
             if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
             {
+                if (!cachePtr) continue;
                 cachePtr->ensureMatricesAtTime(time);
                 pos = MPoint(pos) * cachePtr->matrixCache[time] * currentCameraMatrix;
             }
@@ -108,6 +133,7 @@ void BufferPath::draw(M3dView &view, CameraCache* cachePtr, MHWRender::MUIDrawMa
     MMatrix currentCameraMatrix;
     if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
     {
+        if (!cachePtr) return;
         double currentTime = MAnimControl::currentTime().as(MTime::uiUnit());
         cachePtr->ensureMatricesAtTime(currentTime);
         currentCameraMatrix = cachePtr->matrixCache[currentTime].inverse();

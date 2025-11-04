@@ -16,6 +16,7 @@
 #include <maya/MAnimControl.h>
 #include <maya/MViewport2Renderer.h>
 #include <maya/M3dView.h>
+#include <maya/MString.h>
 
 #include <vector>
 #include <map>
@@ -27,23 +28,28 @@ class BufferPath
 {
     public:
         BufferPath();
-    
+
         void draw(M3dView &view, CameraCache* cachePtr, MHWRender::MUIDrawManager* drawManager = NULL, const MHWRender::MFrameContext* frameContext = NULL);
         void setSelected(bool value){selected = value;};
         void setMinTime(double value){minTime = value;};
         void setFrames(std::vector<MVector> value){frames=value;};
         void setKeyFrames(std::map<double, MVector> value){keyFrames=value;};
         const std::vector<MVector>* getFrames(){return &frames;};
+
+        // Name support for object identification
+        void setObjectName(const MString& name){objectName = name;};
+        MString getObjectName() const {return objectName;};
     
     private:
         void drawFrames(const double startTime, const double endTime, const MColor &curveColor, CameraCache* cachePtr, const MMatrix &currentCameraMatrix, M3dView &view, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext);
         void drawKeyFrames(const double startTime, const double endTime, const MColor &curveColor, CameraCache* cachePtr, const MMatrix &currentCameraMatrix, M3dView &view, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext);
-    
+
         std::vector<MVector> frames;
         std::map<double, MVector> keyFrames;
         bool selected;
         MColor black;
-        double minTime;   
+        double minTime;
+        MString objectName;  // Store object name for identification   
     
 };
 

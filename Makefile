@@ -15,9 +15,8 @@ VERSION =	$(MAJOR).$(MINOR)
 
 LIBNAME =	$(NAME).so
 
-C++			= g++
-MAYAVERSION = 2025
-# Maya 2025 requires C++17 and modern compiler
+C++			= g++412
+MAYAVERSION = 2015
 # Uncomment the following line on MIPSpro 7.2 compilers to supress
 # warnings about declarations in the X header files
 # WARNFLAGS	= -woff 3322
@@ -26,9 +25,9 @@ MAYAVERSION = 2025
 # occur much faster.  If you link transitively (the default) then
 # a number of "ld Warning 85" messages will be printed by ld.
 # They are expected, and can be safely ignored.
-MAYA_LOCATION = /usr/autodesk/maya$(MAYAVERSION)
+MAYA_LOCATION = /usr/autodesk/maya$(MAYAVERSION)-x64/
 INSTALL_PATH = /home/alan/projects/deploy/maya/tcMotionPath/1.0/plug-ins/$(MAYAVERSION)/linux
-CFLAGS		= -std=c++17 -m64 -pthread -pipe -D_BOOL -DLINUX -DREQUIRE_IOSTREAM -DNOMINMAX -Wno-deprecated -fno-gnu-keywords -fPIC -DUSE_PTHREADS -DUSE_LICENSE -O2
+CFLAGS		= -m64 -pthread -pipe -D_BOOL -DLINUX -DREQUIRE_IOSTREAM -Wno-deprecated -fno-gnu-keywords -fPIC -DUSE_PTHREADS -DUSE_LICENSE -O2
 C++FLAGS	= $(CFLAGS) $(WARNFLAGS)
 INCLUDES	= -I. -I$(MAYA_LOCATION)/include -I./include -I/home/alan/projects/build/include/libxml2 -I/home/alan/projects/build/include -I/home/alan/projects/build/include/LicenseClient
 LD			= $(C++) -shared $(C++FLAGS)
