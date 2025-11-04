@@ -1,4 +1,3 @@
-#include "PlatformFixes.h"
 
 #include "MotionPathEditContext.h"
 #include "GlobalSettings.h"
@@ -34,6 +33,7 @@ MotionPathEditContext::~MotionPathEditContext()
 	if (ctxMenuWidget)
 	{
 		delete ctxMenuWidget;
+		ctxMenuWidget = nullptr;
 	}
 }
 

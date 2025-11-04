@@ -6,19 +6,18 @@
 //
 //
 
-#include "PlatformFixes.h"
-
-#include <QtWidgets/QWidget>
-#include <QtWidgets/QMenu>
-#include <QtCore/QPointer>
-#include <QtWidgets/QAction>
-#include <QtCore/QEvent>
-#include <QtGui/QMouseEvent>
-#include <QtGui/QKeyEvent>
+#include <QWidget>
+#include <QMenu>
+#include <QPointer>
+#include <QAction>
+#include <QEvent>
+#include <QMouseEvent>
+#include <QKeyEvent>
 
 #include <maya/MGlobal.h>
 #include <maya/M3dView.h>
 #include <maya/MStringArray.h>
+#include <maya/MAnimControl.h>
 
 #include "MotionPathEditContextMenuWidget.h"
 #include "ContextUtils.h"
@@ -50,8 +49,9 @@ void ContextMenuWidget::refreshSelection(const QPoint point)
 	QPoint p = view.widget()->mapFromGlobal(point);
 	double y = view.widget()->height() - p.y() - 1;
 
-	MString name = view.rendererString();
-	bool new_ = name != "hwRender_OpenGL_Renderer" && name != "base_OpenGL_Renderer";
+    // NOTE: The rendererString() method is obsolete. Viewport 2.0 is the default in Maya 2025.
+    // The logic is simplified to always use the modern hit-testing path.
+    bool new_ = true;
     
     CameraCache *cachePtr = mpManager.getCameraCachePtrFromView(view);
     
@@ -92,7 +92,7 @@ bool ContextMenuWidget::eventFilter(QObject *o, QEvent *event)
 		if((pMouseEvent->button()==Qt::RightButton)&&(pMouseEvent->modifiers()==Qt::NoModifier))
 		{
 			unsigned int x = pMouseEvent->x(), y = pMouseEvent->y();
-            refreshSelection(pMouseEvent->globalPos());
+            refreshSelection(pMouseEvent->globalPosition().toPoint());
             if (!curve)
                 return false;
             
@@ -145,7 +145,7 @@ bool ContextMenuWidget::eventFilter(QObject *o, QEvent *event)
             
             menu->popup(m_parent->mapToGlobal(pMouseEvent->pos()));
             
-			this->connect(menu, SIGNAL(triggered(QAction*)), this, SLOT(menuAction(QAction*)));
+			connect(menu, &QMenu::triggered, this, &ContextMenuWidget::menuAction);
             
 			return true;
              
@@ -154,64 +154,71 @@ bool ContextMenuWidget::eventFilter(QObject *o, QEvent *event)
 	}
 	return QWidget::eventFilter(o, event);
 }
-
-void ContextMenuWidget::menuAction(QAction *action)
+void ContextMenuWidget::menuAction(QAction* action)
 {
     if (action == NULL)  return;
-    
-    MotionPath *motionPathPtr = mpManager.getMotionPathPtr(selectedCurveId);
+
+    MotionPath* motionPathPtr = mpManager.getMotionPathPtr(selectedCurveId);
     if (motionPathPtr == NULL) return;
-    
-    if (action->data().toString() == "copy")
+
+    // 减少重复调用
+    QString cmd = action->data().toString();
+
+    if (cmd == "copy")
     {
         motionPathPtr->storeSelectedKeysInClipboard();
         return;
     }
-    
-    if (action->data().toString() == "offsetPaste")
+
+    // 获取场景上的最大时间（MAnimControl::maxTime() 返回 MTime）
+    double maxTimeUI = MAnimControl::maxTime().as(MTime::uiUnit());
+    double currentTimeUI = MAnimControl::currentTime().as(MTime::uiUnit());
+
+    if (cmd == "offsetPaste")
     {
-        if (motionPathPtr->getNumKeyFrames() == 0 && frameTime == MAnimControl::maxTime().as(MTime::uiUnit()))
-            motionPathPtr->pasteKeys(MAnimControl::currentTime().as(MTime::uiUnit()), true);
+        if (motionPathPtr->getNumKeyFrames() == 0 && frameTime == maxTimeUI)
+            motionPathPtr->pasteKeys(currentTimeUI, true);
         else
-            motionPathPtr->pasteKeys(keyframe ? motionPathPtr->getTimeFromKeyId(selectedKeys[0]): frameTime, true);
+            motionPathPtr->pasteKeys(keyframe ? motionPathPtr->getTimeFromKeyId(selectedKeys[0]) : frameTime, true);
 
         return;
     }
-    
-    if (action->data().toString() == "offsetPasteAtCurrentTime")
+
+    if (cmd == "offsetPasteAtCurrentTime")
     {
-        motionPathPtr->pasteKeys(MAnimControl::currentTime().as(MTime::uiUnit()), true);
+        motionPathPtr->pasteKeys(currentTimeUI, true);
         return;
     }
-    
-    if (action->data().toString() == "paste")
+
+    if (cmd == "paste")
     {
-        if (motionPathPtr->getNumKeyFrames() == 0 && frameTime == MAnimControl::maxTime().as(MTime::uiUnit()))
-            motionPathPtr->pasteKeys(MAnimControl::currentTime().as(MTime::uiUnit()), false);
+        if (motionPathPtr->getNumKeyFrames() == 0 && frameTime == maxTimeUI)
+            motionPathPtr->pasteKeys(currentTimeUI, false);
         else
-            motionPathPtr->pasteKeys(keyframe ? motionPathPtr->getTimeFromKeyId(selectedKeys[0]): frameTime, false);
+            motionPathPtr->pasteKeys(keyframe ? motionPathPtr->getTimeFromKeyId(selectedKeys[0]) : frameTime, false);
         return;
     }
-    
-    if (action->data().toString() == "pasteAtCurrentTime")
+
+    if (cmd == "pasteAtCurrentTime")
     {
-        motionPathPtr->pasteKeys(MAnimControl::currentTime().as(MTime::uiUnit()), false);
+        motionPathPtr->pasteKeys(currentTimeUI, false);
         return;
     }
-    
-    if (action->data().toString() == "addKey" || action->data().toString() == "deleteKey")
+
+    if (cmd == "addKey" || cmd == "deleteKey")
     {
         mpManager.startAnimUndoRecording();
-        
-        if (action->data().toString() == "addKey")
+
+        if (cmd == "addKey")
             motionPathPtr->addKeyFrameAtTime(frameTime, mpManager.getAnimCurveChangePtr());
         else
             motionPathPtr->deleteKeyFrameWithId(selectedKeys[0], mpManager.getAnimCurveChangePtr());
-        
+
         mpManager.stopDGAndAnimUndoRecording();
         M3dView::active3dView().refresh();
         return;
     }
+
     
     if (action->data().toString() == "deleteSelectedKeysAction")
     {

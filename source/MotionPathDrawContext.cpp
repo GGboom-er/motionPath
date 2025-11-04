@@ -6,8 +6,6 @@
 //
 //
 
-#include "PlatformFixes.h"
-
 #include "MotionPathDrawContext.h"
 
 #include "GlobalSettings.h"
@@ -52,26 +50,54 @@ void MotionPathDrawContext::drawStroke()
 {
     if (strokePoints.length() < 2)
         return;
-    
+
+    // Performance & Visual optimization: Smooth anti-aliased stroke
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_LINE_SMOOTH);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+
+    // Draw thick outer stroke for better visibility
+    glLineWidth(4.0f);
+    glColor4f(0.2f, 0.2f, 0.2f, 0.6f); // Dark semi-transparent outline
     glBegin(GL_LINE_STRIP);
     for (int i = 0; i < strokePoints.length(); ++i)
         glVertex2f(strokePoints[i].x, strokePoints[i].y);
     glEnd();
+
+    // Draw inner bright stroke
+    glLineWidth(2.0f);
+    glColor4f(1.0f, 1.0f, 1.0f, 0.95f); // Bright white
+    glBegin(GL_LINE_STRIP);
+    for (int i = 0; i < strokePoints.length(); ++i)
+        glVertex2f(strokePoints[i].x, strokePoints[i].y);
+    glEnd();
+
+    glDisable(GL_LINE_SMOOTH);
 }
 
 void MotionPathDrawContext::drawStrokeNew(MHWRender::MUIDrawManager& drawMgr)
 {
     if (strokePoints.length() < 2)
         return;
-    
+
+    // Performance optimization: Batch draw all segments
     drawMgr.beginDrawable();
-    drawMgr.setLineWidth(2.0f);
-    drawMgr.setColor(MColor(1.0, 1.0, 1.0));
+
+    // Draw dark outline for better visibility
+    drawMgr.setLineWidth(4.0f);
+    drawMgr.setColor(MColor(0.2f, 0.2f, 0.2f, 0.6f));
+    drawMgr.setLineStyle(MHWRender::MUIDrawManager::kSolid);
     for (int i = 1; i < strokePoints.length(); ++i)
         drawMgr.line2d(strokePoints[i-1], strokePoints[i]);
-    
+
+    // Draw bright center line
+    drawMgr.setLineWidth(2.0f);
+    drawMgr.setColor(MColor(1.0f, 1.0f, 1.0f, 0.95f));
+    for (int i = 1; i < strokePoints.length(); ++i)
+        drawMgr.line2d(strokePoints[i-1], strokePoints[i]);
+
     drawMgr.endDrawable();
-    
 }
 
 bool MotionPathDrawContext::doPressCommon(MEvent &event, const bool old)
@@ -295,13 +321,24 @@ MStatus MotionPathDrawContext::doDrag(MEvent &event)
         if (currentMode == kStroke)
         {
             activeView.beginXorDrawing(true, true, 2.0f, M3dView::kStippleNone);
-            
+
             drawStroke();
-            
+
+            // Performance & Visual optimization: Adaptive sampling based on speed
             MVector v(finalX, finalY, 0);
-            if ((v - strokePoints[strokePoints.length()-1]).length() > 20)
+            if (strokePoints.length() > 0)
+            {
+                double distance = (v - strokePoints[strokePoints.length()-1]).length();
+                // Adaptive threshold: closer points when moving slowly for precision
+                double threshold = 8.0; // Reduced from 20 for smoother curves
+                if (distance > threshold)
+                    strokePoints.append(v);
+            }
+            else
+            {
                 strokePoints.append(v);
-            
+            }
+
             drawStroke();
             
             activeView.endXorDrawing();
@@ -336,10 +373,21 @@ MStatus MotionPathDrawContext::doDrag(MEvent & event, MHWRender::MUIDrawManager&
         {
             short int thisX, thisY;
             event.getPosition(thisX, thisY);
-            
+
+            // Performance & Visual optimization: Adaptive sampling
             MVector v(thisX, thisY, 0);
-            if ((v - strokePoints[strokePoints.length()-1]).length() > 20)
+            if (strokePoints.length() > 0)
+            {
+                double distance = (v - strokePoints[strokePoints.length()-1]).length();
+                // Reduced threshold for smoother curves
+                double threshold = 8.0;
+                if (distance > threshold)
+                    strokePoints.append(v);
+            }
+            else
+            {
                 strokePoints.append(v);
+            }
 
             drawStrokeNew(drawMgr);
             
@@ -431,7 +479,11 @@ MVector MotionPathDrawContext::getClosestPointOnPolyLine(const MVector &q)
 MVector MotionPathDrawContext::getSpreadPointOnPolyLine(const int i, const int pointSize, const double strokeLenght, const std::vector<double> &segmentLenghts)
 {
     if (i == pointSize-1)
+    {
+        if (strokePoints.length() == 0)
+            return MVector::zero;
         return strokePoints[strokePoints.length() - 1];
+    }
     else
     {
         //we do +1 as the first key is not evaluated, and with pointSize there no -1

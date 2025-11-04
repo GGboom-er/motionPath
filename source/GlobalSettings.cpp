@@ -1,4 +1,3 @@
-#include "PlatformFixes.h"
 
 #include "GlobalSettings.h"
 
@@ -14,8 +13,11 @@ MColor GlobalSettings::bufferPathColor = MColor(0.2, 0.2, 0.2);
 MColor GlobalSettings::weightedPathTangentColor = MColor(0.2, 0.2, 0.2);
 MColor GlobalSettings::weightedPathColor = MColor(0.2, 0.2, 0.2);
 MColor GlobalSettings::frameLabelColor = MColor(0.1, 0.1, 0.1);
+MColor GlobalSettings::keyframeLabelColor = MColor(1.0, 1.0, 0.0);  // Yellow for keyframe numbers
 double GlobalSettings::pathSize = 3.0;
 double GlobalSettings::frameSize = 7.0;
+double GlobalSettings::keyframeLabelSize = 1.2;  // Slightly larger for keyframes
+double GlobalSettings::frameLabelSize = 0.8;     // Normal size for regular frames
 bool GlobalSettings::showTangents = true;
 bool GlobalSettings::showKeyFrames = true;
 bool GlobalSettings::showKeyFrameNumbers = false;

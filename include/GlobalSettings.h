@@ -10,10 +10,16 @@
 class GlobalSettings
 {
 	public:
+        // Size multipliers for different frame types - eliminates magic numbers
+        static constexpr double KEYFRAME_SIZE_MULTIPLIER = 1.5;      // Keyframe marker size
+        static constexpr double CURRENT_FRAME_SIZE_MULTIPLIER = 2.2; // Current frame marker size
+        static constexpr double SELECTED_KEY_SIZE_MULTIPLIER = 1.2;  // Selected keyframe size
+        static constexpr double BLACK_BACKGROUND_FACTOR = 1.2;       // Background outline factor
+
         enum DrawMode{
             kWorldSpace = 0,
             kCameraSpace = 1};
-    
+
 		static double startTime;
 		static double endTime;
 		static double framesBack;
@@ -26,8 +32,11 @@ class GlobalSettings
         static MColor weightedPathTangentColor;
         static MColor weightedPathColor;
         static MColor frameLabelColor;
+		static MColor keyframeLabelColor;
 		static double pathSize;
 		static double frameSize;
+		static double keyframeLabelSize;      // Size of keyframe number labels
+		static double frameLabelSize;         // Size of regular frame number labels
 		static bool showTangents;
         static bool showKeyFrames;
         static bool showKeyFrameNumbers;

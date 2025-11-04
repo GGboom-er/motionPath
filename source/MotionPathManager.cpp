@@ -6,8 +6,6 @@
 //
 //
 
-#include "PlatformFixes.h"
-
 #include <maya/MModelMessage.h>
 #include <maya/MDagMessage.h>
 #include <maya/MNodeMessage.h>
@@ -213,20 +211,23 @@ void MotionPathManager::viewCameraChanged(const MString &str, MObject &node, voi
 {
     if (!GlobalSettings::enabled || GlobalSettings::motionPathDrawMode == GlobalSettings::kWorldSpace)
         return;
-    
+
     MotionPathManager* mpManager = (MotionPathManager*) data;
-    
+
 	if(mpManager)
     {
         MDagPath camera;
         MDagPath::getAPathTo(node, camera);
-        
+
         //camera callbacks
         if (camera.isValid())
             mpManager->createCameraCacheForCamera(camera);
-        
+
         //panel callbacks
         mpManager->refreshCameraCallbackForPanel(str, camera);
+
+        // Trigger viewport refresh when camera changes in camera space mode
+        MGlobal::executeCommandOnIdle("refresh");
     }
 }
 
@@ -253,23 +254,23 @@ void MotionPathManager::cameraWorldMatrixChangedCallback(MObject& transformNode,
 {
     if (!GlobalSettings::enabled || GlobalSettings::motionPathDrawMode == GlobalSettings::kWorldSpace)
         return;
-    
+
     CameraCache *cachePtr  = (CameraCache *) data;
     if (cachePtr->isCaching())
         return;
-    
+
     if (!cachePtr->isInitialized())
         return;
-    
+
     bool autokey = MAnimControl::autoKeyMode();
-    
+
     //check if the camera has the needed data
     if (MAnimControl::isPlaying() && autokey)
     {
         cachePtr->checkRangeIsCached();
         return;
     }
-    
+
     #if MAYA_API_VERSION > 201500
         //check if the camera has the needed data
         if (MAnimControl::isScrubbing() && autokey)
@@ -278,8 +279,11 @@ void MotionPathManager::cameraWorldMatrixChangedCallback(MObject& transformNode,
             return;
         }
     #endif
-    
+
     cachePtr->cacheCamera();
+
+    // Trigger viewport refresh when camera matrix changes in camera space mode
+    MGlobal::executeCommandOnIdle("refresh");
 }
 
 CameraCache *MotionPathManager::getCameraCachePtrFromView(M3dView &view)
@@ -355,20 +359,31 @@ void MotionPathManager::viewPostRenderCallback(const MString& panelName, void* d
 			}
 			
 			view.beginGL();
-            
+
 			glPushAttrib(GL_ALL_ATTRIB_BITS);
             glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS);
 			glPushMatrix();
-            
-			glDisable(GL_LIGHTING);
-			glDisable(GL_DEPTH_TEST);
-            
-            for (int i = 0; i < mpManager->bufferPathArray.size(); ++i)
-                mpManager->bufferPathArray[i].draw(view, cachePtr);
-            
-			for(int i = 0; i < mpManager->pathArray.size(); ++i)
-                mpManager->pathArray[i].draw(view, cachePtr);
-            
+
+			// Exception safety: Use try-catch to ensure GL state is always restored
+			// This prevents VP2 viewport from getting stuck if drawing code throws
+			try
+			{
+				glDisable(GL_LIGHTING);
+				glDisable(GL_DEPTH_TEST);
+
+				for (int i = 0; i < mpManager->bufferPathArray.size(); ++i)
+					mpManager->bufferPathArray[i].draw(view, cachePtr);
+
+				for(int i = 0; i < mpManager->pathArray.size(); ++i)
+					mpManager->pathArray[i].draw(view, cachePtr);
+			}
+			catch (...)
+			{
+				// Catch any exceptions to ensure GL state cleanup
+				// Re-throw after cleanup is optional - we silently recover
+			}
+
+			// Always restore GL state, even if exception occurred
 			glPopMatrix();
 			glPopAttrib();
             glPopClientAttrib();
@@ -493,8 +508,7 @@ void MotionPathManager::getSelection(MObjectArray &objArray)
 		if(!dependNode.isNull() && dependNode.hasFn(MFn::kDependencyNode))
 		{
 			MFnDependencyNode dependNodeFn(dependNode);
-			MStatus status;
-			if (!dependNodeFn.findPlug("translate", false, &status).isNull())
+			if (!dependNodeFn.findPlug("translate", false).isNull())
 				objArray.append(dependNode);
 		}
 	}
@@ -593,16 +607,21 @@ void MotionPathManager::getDagPath(const MString &name, MDagPath &dp)
 void MotionPathManager::refreshDisplayTimeRange()
 {
     double currentFrame = MAnimControl::currentTime().as(MTime::uiUnit());
-    
+
+    // Calculate desired display range based on current time
     double startFrame = currentFrame - GlobalSettings::framesBack;
     double endFrame = currentFrame + GlobalSettings::framesFront;
-    
-    if(startFrame < GlobalSettings::startTime)	startFrame = GlobalSettings::startTime;
-	if(endFrame > GlobalSettings::endTime) 	endFrame = GlobalSettings::endTime;
-    
+
+    // Note: We don't clamp to GlobalSettings::startTime/endTime here
+    // Each MotionPath will clamp to its own keyframe range in setDisplayTimeRange()
+    // This ensures:
+    // 1. Each object respects its own animation range
+    // 2. No frame numbers appear beyond actual keyframes
+    // 3. Start/end labels don't overlap when range is too small
+
     if(!cacheDone)
 		cacheDone = expandParentMatrixAndPivotCache(currentFrame);
-    
+
 	for(int i = 0; i < pathArray.size(); i++)
 		pathArray[i].setDisplayTimeRange(startFrame, endFrame);
 }
