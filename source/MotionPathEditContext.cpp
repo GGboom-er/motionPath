@@ -204,8 +204,12 @@ bool MotionPathEditContext::doPressCommon(MEvent &event, const bool old)
                     lastSelectedTime = selectedMotionPathPtr->getTimeFromKeyId(selectedKeys[i]);
                     times.append(lastSelectedTime);
                 }
-                
-                modifySelection(times, event.isModifierControl(), event.isModifierShift());
+
+                // Only allow left mouse button to modify selection, middle button only moves
+                if (event.mouseButton() != MEvent::kMiddleMouse)
+                {
+                    modifySelection(times, event.isModifierControl(), event.isModifierShift());
+                }
                 
                 selectedMotionPathPtr->getKeyWorldPosition(lastSelectedTime, keyWorldPosition);
                 lastWorldPosition = keyWorldPosition;
