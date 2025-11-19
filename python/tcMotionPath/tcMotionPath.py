@@ -105,27 +105,34 @@ _default_values = {
 class TOOLS:
     """Motion Path tool identifiers"""
     EDIT = 'motionPathEdit'
-    DRAW = 'motionPathDraw'
+    DRAW = 'motionPathDraw'  # Kept for backward compatibility, not shown in UI
 
     @classmethod
     def all( cls ):
-        """Return all available tools"""
-        return [cls.EDIT, cls.DRAW]
+        """Return all available tools for UI buttons"""
+        return [cls.EDIT]  # Only Edit button shown, Draw integrated via Caps Lock
 
     @classmethod
     def tooltip( cls, name ):
         """Return tooltip text for a given tool"""
         if name == cls.EDIT:
-            return ('Left-Click: Select/Move\n'
-                    'Shift+Left-Click: Add to selection\n'
-                    'CTRL+Left-Click: Toggle selection\n'
-                    'CTRL+Left-Click-Drag: Move Selection on the XY plane\n'
-                    'CTRL+Middle-Click-Drag: Move Along Y Axis\n'
-                    'Right-Click on path/frame/key: show menu')
+            return (
+                '===== Edit Mode (Caps Lock OFF) =====\n'
+                'Left-Click: Select/Move keyframe\n'
+                'Shift+Left-Click: Add to selection\n'
+                'Ctrl+Left-Click: Toggle selection\n'
+                'Ctrl+MMB-Drag: Move along Y axis\n'
+                'Right-Click: Context menu\n'
+                '\n'
+                '===== Draw Mode (Caps Lock ON) =====\n'
+                'Left-Drag on keyframe: Create new keyframes\n'
+                'Ctrl+Left-Drag: Adjust existing keyframes\n'
+                '\n'
+                '[Tip] Toggle Caps Lock to switch modes'
+            )
         elif name == cls.DRAW:
             return ('Left-Click key frame then drag to draw path\n'
-                    'CTRL-Left-Click key frame then drag to draw proximity stroke\n'
-                    'Middle-Click in the viewport to add a keyframe at the current time.')
+                    'CTRL-Left-Click key frame then drag to draw proximity stroke')
         return ""
 
 
