@@ -71,6 +71,10 @@ public:
     MVector inTangentWorldFromCurve;
     MVector outTangentWorldFromCurve;
 
+    // A3: Screen-space cache for tangent handles (VP2 performance)
+    MVector inTangentProj;   // Cached screen position for in-tangent
+    MVector outTangentProj;  // Cached screen position for out-tangent
+
     bool selectedFromTool;
 };
 

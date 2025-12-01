@@ -33,7 +33,6 @@ set(SOURCES
     source/BufferPath.cpp
     source/CameraCache.cpp
     source/ContextUtils.cpp
-    source/DrawUtils.cpp
     source/GlobalSettings.cpp
     source/KeyClipboard.cpp
     source/Keyframe.cpp
@@ -41,9 +40,11 @@ set(SOURCES
     source/MotionPathCmd.cpp
     source/MotionPathDrawContext.cpp
     source/MotionPathEditContext.cpp
+    source/MotionPathEditContextVP2.cpp
     source/MotionPathEditContextMenuWidget.cpp
     source/MotionPathManager.cpp
     source/MotionPathOverride.cpp
+    source/PickingGrid.cpp
     source/PluginMain.cpp
     source/Vp2DrawUtils.cpp
 )
@@ -54,7 +55,6 @@ set(HEADERS
     include/BufferPath.h
     include/CameraCache.h
     include/ContextUtils.h
-    include/DrawUtils.h
     include/GlobalSettings.h
     include/KeyClipboard.h
     include/Keyframe.h
@@ -65,6 +65,7 @@ set(HEADERS
     include/MotionPathEditContextMenuWidget.h
     include/MotionPathManager.h
     include/MotionPathOverride.h
+    include/PickingGrid.h
     include/Vp2DrawUtils.h
 )
 

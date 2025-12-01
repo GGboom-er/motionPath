@@ -55,10 +55,8 @@ void ContextMenuWidget::refreshSelection(const QPoint point)
     
     CameraCache *cachePtr = mpManager.getCameraCachePtrFromView(view);
     
-	if (new_)
-		selectedCurveId = contextUtils::processCurveHits(p.x(), y, GlobalSettings::cameraMatrix, view, cachePtr, mpManager);
-	else
-		selectedCurveId = contextUtils::processCurveHits(view, cachePtr, mpManager);
+	// A1: Always use coordinate-based picking
+	selectedCurveId = contextUtils::processCurveHits(p.x(), y, GlobalSettings::cameraMatrix, view, cachePtr, mpManager);
     if (selectedCurveId == -1)
         return;
     
@@ -67,20 +65,16 @@ void ContextMenuWidget::refreshSelection(const QPoint point)
 	if (!motionPathPtr)
 		return;
 
-	if (new_)
-		contextUtils::processKeyFrameHits(p.x(), y, motionPathPtr, view, GlobalSettings::cameraMatrix, cachePtr, selectedKeys);
-	else
-		contextUtils::processKeyFrameHits(motionPathPtr, view, cachePtr, selectedKeys);
+	// A1: Always use coordinate-based picking
+	contextUtils::processKeyFrameHits(p.x(), y, motionPathPtr, view, GlobalSettings::cameraMatrix, cachePtr, selectedKeys);
     if (selectedKeys.length() > 0)
     {
         keyframe = true;
         return;
     }
     
-	if (new_)
-		frame = contextUtils::processFramesHits(p.x(), y, motionPathPtr, view, GlobalSettings::cameraMatrix, cachePtr, frameTime);
-	else
-		frame = contextUtils::processFramesHits(motionPathPtr, view, cachePtr, frameTime);
+	// A1: Always use coordinate-based picking
+	frame = contextUtils::processFramesHits(p.x(), y, motionPathPtr, view, GlobalSettings::cameraMatrix, cachePtr, frameTime);
 
 }
 
@@ -91,7 +85,9 @@ bool ContextMenuWidget::eventFilter(QObject *o, QEvent *event)
 		QMouseEvent *pMouseEvent = static_cast<QMouseEvent *>(event);
 		if((pMouseEvent->button()==Qt::RightButton)&&(pMouseEvent->modifiers()==Qt::NoModifier))
 		{
-			unsigned int x = pMouseEvent->x(), y = pMouseEvent->y();
+			QPointF mousePos = pMouseEvent->position();  // Qt 6: Use position() instead of x()/y()
+			unsigned int x = static_cast<unsigned int>(mousePos.x());
+			unsigned int y = static_cast<unsigned int>(mousePos.y());
             refreshSelection(pMouseEvent->globalPosition().toPoint());
             if (!curve)
                 return false;
@@ -161,7 +157,7 @@ void ContextMenuWidget::menuAction(QAction* action)
     MotionPath* motionPathPtr = mpManager.getMotionPathPtr(selectedCurveId);
     if (motionPathPtr == NULL) return;
 
-    // ¼õÉÙÖØ¸´µ÷ÓÃ
+    // ï¿½ï¿½ï¿½ï¿½ï¿½Ø¸ï¿½ï¿½ï¿½ï¿½ï¿½
     QString cmd = action->data().toString();
 
     if (cmd == "copy")
@@ -170,7 +166,7 @@ void ContextMenuWidget::menuAction(QAction* action)
         return;
     }
 
-    // »ñÈ¡³¡¾°ÉÏµÄ×î´óÊ±¼ä£¨MAnimControl::maxTime() ·µ»Ø MTime£©
+    // ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½Ïµï¿½ï¿½ï¿½ï¿½Ê±ï¿½ä£¨MAnimControl::maxTime() ï¿½ï¿½ï¿½ï¿½ MTimeï¿½ï¿½
     double maxTimeUI = MAnimControl::maxTime().as(MTime::uiUnit());
     double currentTimeUI = MAnimControl::currentTime().as(MTime::uiUnit());
 

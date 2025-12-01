@@ -32,4 +32,11 @@ namespace VP2DrawUtils
 	void convertWorldSpaceToCameraSpace(CameraCache* cachePtr, std::map<double, MPoint> &positions, std::map<double, MPoint> &screenSpacePositions, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext);
 
 	void drawFrameLabel(double frame, const MVector &framePos, M3dView &view, const double sizeOffset, const MColor &color, const MMatrix &cameraMatrix, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext);
+
+	// A3: Cached screen-space drawing functions (avoid worldToViewport calls)
+	void drawLine2dCached(const MPoint &screenPos1, const MPoint &screenPos2, float lineWidth, const MColor &color, MHWRender::MUIDrawManager* drawManager);
+	void drawPoint2dCached(const MPoint &screenPos, float size, const MColor &color, MHWRender::MUIDrawManager* drawManager);
+
+	// B4: Cached label drawing (avoids worldToViewport)
+	void drawFrameLabelCached(double frame, const MPoint &screenPos, const double sizeOffset, const MColor &color, MHWRender::MUIDrawManager* drawManager);
 }

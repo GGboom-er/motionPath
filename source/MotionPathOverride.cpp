@@ -91,26 +91,37 @@ void MotionPathUserOperation::addUIDrawables(
 		else // camera space mode
 		{
 			cachePtr = mpManager.getCameraCachePtrFromView(view);
+
+			// BUG #6 Fix: If cache not found during viewport rebuild, gracefully degrade to world space
+			// DO NOT create cache here - this runs in VP2 render thread and would cause deadlock
 			if (!cachePtr)
-				return;
-
-			if (!cachePtr->isInitialized())
 			{
-				cachePtr->initialize(camera.node());
-				cachePtr->cacheCamera();
+				// Temporarily use world space mode for this frame
+				GlobalSettings::portWidth = view.portWidth();
+				GlobalSettings::portHeight = view.portHeight();
+				cachePtr = NULL;  // Draw using world space coordinates
 			}
+			else
+			{
+				// Cache available - proceed with camera space mode
+				if (!cachePtr->isInitialized())
+				{
+					cachePtr->initialize(camera.node());
+					cachePtr->cacheCamera();
+				}
 
-			cachePtr->portWidth = view.portWidth();
-			cachePtr->portHeight = view.portHeight();
+				cachePtr->portWidth = view.portWidth();
+				cachePtr->portHeight = view.portHeight();
+			}
 		}
 
 		drawManager.beginDrawInXray();
 
 		mpManager.drawBufferPaths(view, cachePtr, &drawManager, &frameContext);
 		mpManager.drawPaths(view, cachePtr, &drawManager, &frameContext);
-		
+
 		drawManager.endDrawInXray();
 	}
-	
+
 }
 

@@ -16,17 +16,27 @@
 #include <maya/MPlug.h>
 
 #include <map>
+#include <unordered_map>
 
 class CameraCache
 {
     public:
         CameraCache();
         ~CameraCache(){}
-    
-        std::map<double, MMatrix> matrixCache;
+
+        // A2: Changed to unordered_map with int64_t tick keys for O(1) lookup
+        std::unordered_map<int64_t, MMatrix> matrixCache;
         //std::map<double, MMatrix> projMatrixCache;
         int portWidth;
         int portHeight;
+
+        // A2: Time to tick conversion (Maya uses 6000 ticks per time unit)
+        static inline int64_t timeToTick(double time) {
+            return static_cast<int64_t>(time * 6000.0 + 0.5);
+        }
+        static inline double tickToTime(int64_t tick) {
+            return static_cast<double>(tick) / 6000.0;
+        }
     
         bool isCaching(){return caching;}
         bool isInitialized(){return initialized;}

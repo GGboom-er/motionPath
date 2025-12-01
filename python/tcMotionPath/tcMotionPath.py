@@ -1,4 +1,4 @@
-#                Toolchefs ltd - Software Disclaimer
+﻿#                Toolchefs ltd - Software Disclaimer
 #
 # Copyright 2014 Toolchefs Limited
 #
@@ -36,6 +36,34 @@ from maya.app.general.mayaMixin import MayaQWidgetDockableMixin
 from maya import OpenMayaUI
 from maya import OpenMaya
 from maya import cmds
+
+# Refresh debouncer to collapse multiple refresh calls into one frame
+_refresh_request_pending = False
+_refresh_force_pending = False
+
+def _flush_refresh():
+    """Execute a pending refresh request."""
+    global _refresh_request_pending, _refresh_force_pending
+    force = _refresh_force_pending
+    _refresh_request_pending = False
+    _refresh_force_pending = False
+    try:
+        cmds.refresh(force=force)
+    except Exception:
+        pass
+
+def _request_refresh(force=False):
+    """Schedule a single refresh on the next Qt tick."""
+    global _refresh_request_pending, _refresh_force_pending
+    _refresh_force_pending = _refresh_force_pending or force
+    if _refresh_request_pending:
+        return
+    _refresh_request_pending = True
+    try:
+        QtCore.QTimer.singleShot(0, _flush_refresh)
+    except Exception:
+        # Fallback in case timers are unavailable
+        _flush_refresh()
 
 # Workspace Control Name
 WCN = "ToolchefsMotionPathWorkspaceControl"
@@ -117,18 +145,19 @@ class TOOLS:
         """Return tooltip text for a given tool"""
         if name == cls.EDIT:
             return (
-                '===== Edit Mode (Caps Lock OFF) =====\n'
-                'Left-Click: Select/Move keyframe\n'
-                'Shift+Left-Click: Add to selection\n'
-                'Ctrl+Left-Click: Toggle selection\n'
-                'Ctrl+MMB-Drag: Move along Y axis\n'
-                'Right-Click: Context menu\n'
+                '===== 编辑模式 Edit Mode (Caps Lock OFF) =====\n'
+                '左键 Left-Click: 选择/移动关键帧 Select/Move keyframe\n'
+                'Shift+左键 Shift+Left-Click: 添加到选择 Add to selection\n'
+                'Ctrl+左键 Ctrl+Left-Click: 切换选择 Toggle selection\n'
+                'Ctrl+左键拖拽 Ctrl+Left-Drag: 在XY平面移动 Move on XY plane\n'
+                'Ctrl+中键拖拽 Ctrl+MMB-Drag: 沿Y轴移动 Move along Y axis\n'
+                '右键 Right-Click: 上下文菜单 Context menu\n'
                 '\n'
-                '===== Draw Mode (Caps Lock ON) =====\n'
-                'Left-Drag on keyframe: Create new keyframes\n'
-                'Ctrl+Left-Drag: Adjust existing keyframes\n'
+                '===== 绘制模式 Draw Mode (Caps Lock ON) =====\n'
+                '从关键帧拖拽 Left-Drag on keyframe: 创建新关键帧路径 Create new keyframes\n'
+                'Ctrl+拖拽 Ctrl+Left-Drag: 调整现有关键帧 Adjust existing keyframes\n'
                 '\n'
-                '[Tip] Toggle Caps Lock to switch modes'
+                '[提示 Tip] 开关Caps Lock切换模式 Toggle Caps Lock to switch modes'
             )
         elif name == cls.DRAW:
             return ('Left-Click key frame then drag to draw path\n'
@@ -174,7 +203,7 @@ def _playback_range():
 
     _safe_tcMotionPathCmd(frameRange=[min_time, max_time])
     _safe_tcMotionPathCmd(refreshdt=True)
-    cmds.refresh()
+    _request_refresh()
 
 
 def _delete_all_event():
@@ -202,26 +231,40 @@ def _plugin_unload_callback(*args, **kwargs):
     """Callback when motionPath plugin is unloaded
 
     Cleans up viewport overrides and disables Motion Path UI
+    F2/F5 修复: 增强清理逻辑，防止卸载后崩溃
     """
     global tc_motion_path_widget
 
     print("[MotionPath] Plugin unloaded - cleaning up viewports")
 
-    # Clean up viewport overrides
+    # 1. 立即清理所有 scriptJob（防止后续触发已卸载命令）
+    _delete_script_jobs()
+
+    # 2. 清理所有 viewport override
     _cleanup_viewport_overrides()
 
-    # Disable UI if it exists
-    if tc_motion_path_widget and hasattr(tc_motion_path_widget, 'mws'):
+    # 3. 禁用并锁定UI按钮（防止用户继续操作）
+    if tc_motion_path_widget:
         try:
-            if tc_motion_path_widget.mws._enable_button.isChecked():
-                tc_motion_path_widget.mws._enable_button.setChecked(False)
-                tc_motion_path_widget.mws._edit_buttons.setEnabled(False)
-        except:
-            pass
+            # 访问 edit_path_widget（正确的属性名）
+            if hasattr(tc_motion_path_widget, 'edit_path_widget'):
+                edit_widget = tc_motion_path_widget.edit_path_widget
 
-    # Force refresh
+                # 禁用 Enable Motion Path 按钮
+                if hasattr(edit_widget, 'enable_button'):
+                    edit_widget.enable_button.setChecked(False)
+                    edit_widget.enable_button.setEnabled(False)
+                    edit_widget.enable_button.setToolTip("Plugin unloaded. Please reload the plugin.")
+
+                # 禁用工具按钮
+                if hasattr(edit_widget, 'edit_button'):
+                    edit_widget.edit_button.setEnabled(False)
+        except Exception as e:
+            print(f"[MotionPath] Warning: Failed to disable UI: {e}")
+
+    # 4. 强制刷新视口
     try:
-        cmds.refresh(force=True)
+        _request_refresh(force=True)
     except:
         pass
 
@@ -234,6 +277,9 @@ def _check_plugin_unload():
 
 def _init_script_jobs():
     """Initialize all script jobs"""
+    # Avoid重复注册：先清理旧的 scriptJob 再注册，防止卸载/重载后叠加导致卡顿
+    _delete_script_jobs()
+
     _script_job(_playback_range, event="playbackRangeChanged")
     _script_job(_tool_changed, event="ToolChanged")
     _script_job(_delete_all_event, event="deleteAll")
@@ -299,6 +345,8 @@ def _enable_motion_path( status ):
         # This ensures that when re-enabling, paths will be shown correctly
         _safe_tcMotionPathCmd(lockedMode=False)
     else:
+        # 清理可能的残留 override（卸载/重载后）再初始化，避免视口卡住
+        _cleanup_viewport_overrides()
         _init_tool()
         _refresh_selection()
         _playback_range()
@@ -372,7 +420,7 @@ def _enable_motion_path( status ):
             print(f"[MotionPath] Motion Path enabled on {vp2_panel_count} VP2 viewport(s)")
 
         # Force viewport refresh after override change
-        cmds.refresh(force=True)
+        _request_refresh(force=True)
         return True
 
     except Exception as e:
@@ -955,8 +1003,18 @@ class EditPathWidget(QtWidgets.QWidget):
 
     @Slot()
     def _toggle_enable( self ):
-        """Toggle motion path enable state"""
+        """Toggle motion path enable state
+        F2/F5 修复: 增强插件状态检查
+        """
         enabled = self._enable_button.isChecked()
+
+        # F2/F5: 在启用前先检查插件是否加载
+        if enabled and not _is_plugin_loaded():
+            cmds.warning("Motion Path plugin is not loaded. Please load the plugin first.")
+            self._enable_button.setChecked(False)
+            self._edit_buttons.setEnabled(False)
+            return
+
         self._edit_buttons.setEnabled(enabled)
 
         # When disabling, also uncheck locked mode to prevent display issues on re-enable
@@ -980,7 +1038,7 @@ class EditPathWidget(QtWidgets.QWidget):
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(showPath=value)
         _set_default_value(StaticLabels.SHOW_PATH, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _show_keyframes_changed( self, state ):
@@ -988,7 +1046,7 @@ class EditPathWidget(QtWidgets.QWidget):
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(showKeyFrames=value)
         _set_default_value(StaticLabels.SHOW_KEYFRAMES, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _show_rotation_changed( self, state ):
@@ -996,7 +1054,7 @@ class EditPathWidget(QtWidgets.QWidget):
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(showRotationKeyFrames=value)
         _set_default_value(StaticLabels.SHOW_ROTATION, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _show_tangents_changed( self, state ):
@@ -1004,7 +1062,7 @@ class EditPathWidget(QtWidgets.QWidget):
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(showTangents=value)
         _set_default_value(StaticLabels.SHOW_TANGENTS, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _alternate_color_changed( self, state ):
@@ -1012,7 +1070,7 @@ class EditPathWidget(QtWidgets.QWidget):
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(alternatingFrames=value)
         _set_default_value(StaticLabels.ALTERNATE_COLOR, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _use_pivots_changed( self, state ):
@@ -1020,7 +1078,7 @@ class EditPathWidget(QtWidgets.QWidget):
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(usePivots=value)
         _set_default_value(StaticLabels.USEPIVOTS, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _show_knumber_changed( self, state ):
@@ -1028,7 +1086,7 @@ class EditPathWidget(QtWidgets.QWidget):
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(showKeyFrameNumbers=value)
         _set_default_value(StaticLabels.SHOW_KNUMBER, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _show_fnumber_changed( self, state ):
@@ -1036,7 +1094,7 @@ class EditPathWidget(QtWidgets.QWidget):
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(showFrameNumbers=value)
         _set_default_value(StaticLabels.SHOW_FNUMBER, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _frames_before_changed( self, value ):
@@ -1044,7 +1102,7 @@ class EditPathWidget(QtWidgets.QWidget):
         try:
             _safe_tcMotionPathCmd(framesBefore=value)
             _set_default_value(StaticLabels.FRAMES_BEFORE, value)
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error updating frames before: {e}")
             traceback.print_exc()
@@ -1055,7 +1113,7 @@ class EditPathWidget(QtWidgets.QWidget):
         try:
             _safe_tcMotionPathCmd(framesAfter=value)
             _set_default_value(StaticLabels.FRAMES_AFTER, value)
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error updating frames after: {e}")
             traceback.print_exc()
@@ -1066,7 +1124,7 @@ class EditPathWidget(QtWidgets.QWidget):
         try:
             _safe_tcMotionPathCmd(frameInterval=value)
             _set_default_value(StaticLabels.FRAME_DELTA, value)
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error updating frame interval: {e}")
             traceback.print_exc()
@@ -1088,7 +1146,7 @@ class EditPathWidget(QtWidgets.QWidget):
         try:
             _safe_tcMotionPathCmd(drawTimeInterval=value)
             _set_default_value(StaticLabels.TIME_DELTA, value)
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error updating time delta: {e}")
             traceback.print_exc()
@@ -1110,28 +1168,28 @@ class EditPathWidget(QtWidgets.QWidget):
         """Handle draw mode change"""
         mode = self._draw_mode.itemData(index)
         _safe_tcMotionPathCmd(drawMode=mode)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _stroke_mode_changed( self, index ):
         """Handle stroke mode change"""
         mode = self._stroke_mode.itemData(index)
         _safe_tcMotionPathCmd(strokeMode=mode)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _locked_mode_changed( self, state ):
         """Handle locked mode checkbox change"""
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(lockedMode=value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(int)
     def _locked_mode_interactive_changed( self, state ):
         """Handle locked mode interactive checkbox change"""
         value = bool(state == 2)  # Qt.Checked = 2 in all Qt versions
         _safe_tcMotionPathCmd(lockedModeInteractive=value)
-        cmds.refresh()
+        _request_refresh()
 
 
 #############################################################
@@ -1218,7 +1276,7 @@ class MotionPathBufferPaths(QtWidgets.QWidget):
                 })
                 self._buffer_list.addItem(item_name)
 
-            cmds.refresh()
+            _request_refresh()
 
         except Exception as e:
             print(f"Error adding buffer paths: {e}")
@@ -1241,7 +1299,7 @@ class MotionPathBufferPaths(QtWidgets.QWidget):
             # Then select the chosen ones
             for index in selected_indices:
                 _safe_tcMotionPathCmd(selectBufferPathAtIndex=index)
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error selecting buffer paths: {e}")
 
@@ -1268,7 +1326,7 @@ class MotionPathBufferPaths(QtWidgets.QWidget):
                 for i in range(self._buffer_list.count())
             ]
 
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error removing buffer paths: {e}")
             traceback.print_exc()
@@ -1304,7 +1362,7 @@ class MotionPathBufferPaths(QtWidgets.QWidget):
                 _safe_tcMotionPathCmd(convertBufferPath=index)
                 converted_names.append(f"{object_name}_Buffer_Path")
 
-            cmds.refresh()
+            _request_refresh()
 
             # Show success message with curve names
             message = f"Successfully converted {len(conversions)} buffer path(s):\n\n"
@@ -1330,7 +1388,7 @@ class MotionPathBufferPaths(QtWidgets.QWidget):
             _safe_tcMotionPathCmd(deleteAllBufferPaths=True)
             self._buffer_list.clear()
             self._buffer_data.clear()
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error clearing buffer paths: {e}")
             traceback.print_exc()
@@ -1540,7 +1598,7 @@ class MotionPathWidgetSettings(QtWidgets.QWidget):
         self._initialize_color_widget(self._keyframe_number_color,
                                       StaticLabels.KEYFRAME_NUMBER_COLOR, 'keyframeNumberColor')
 
-        cmds.refresh()
+        _request_refresh()
 
     def _connect_signals( self ):
         """Connect widget signals"""
@@ -1584,7 +1642,7 @@ class MotionPathWidgetSettings(QtWidgets.QWidget):
         value = float(self._frame_size.text())
         _safe_tcMotionPathCmd(frameSize=value)
         _set_default_value(StaticLabels.FRAME_SIZE, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot()
     def _path_size_changed( self ):
@@ -1592,7 +1650,7 @@ class MotionPathWidgetSettings(QtWidgets.QWidget):
         value = float(self._path_size.text())
         _safe_tcMotionPathCmd(pathSize=value)
         _set_default_value(StaticLabels.PATH_SIZE, value)
-        cmds.refresh()
+        _request_refresh()
 
     @Slot(float)
     def _keyframe_label_size_changed( self, value ):
@@ -1600,7 +1658,7 @@ class MotionPathWidgetSettings(QtWidgets.QWidget):
         try:
             _safe_tcMotionPathCmd(keyframeLabelSize=value)
             _set_default_value(StaticLabels.KEYFRAME_LABEL_SIZE, value)
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error updating keyframe label size: {e}")
             traceback.print_exc()
@@ -1611,7 +1669,7 @@ class MotionPathWidgetSettings(QtWidgets.QWidget):
         try:
             _safe_tcMotionPathCmd(frameLabelSize=value)
             _set_default_value(StaticLabels.FRAME_LABEL_SIZE, value)
-            cmds.refresh()
+            _request_refresh()
         except Exception as e:
             print(f"Error updating frame label size: {e}")
             traceback.print_exc()
@@ -1621,7 +1679,7 @@ class MotionPathWidgetSettings(QtWidgets.QWidget):
         r, g, b = color.red(), color.green(), color.blue()
         _safe_tcMotionPathCmd(**{cmd_arg_name: [r / 255.0, g / 255.0, b / 255.0]})
         _set_default_value(g_var_name, [r, g, b])
-        cmds.refresh()
+        _request_refresh()
 
     # Note: Individual color change handlers removed - now using lambda connections in _connect_signals()
     # This reduces code duplication from 9 nearly-identical methods to 0, improving maintainability
@@ -1726,7 +1784,7 @@ class MotionPathWidget(MayaQWidgetDockableMixin, QtWidgets.QWidget):
 
         # Force refresh all viewports to clear any rendering artifacts
         try:
-            cmds.refresh(force=True)
+            _request_refresh(force=True)
         except:
             pass
 
@@ -1805,7 +1863,7 @@ def _open_gui():
             # Close the workspace control gracefully
             cmds.workspaceControl(WCN, e=True, close=True)
             # Wait one frame to ensure close completes
-            cmds.refresh()
+            _request_refresh()
         except RuntimeError:
             # Workspace control already deleted
             pass
@@ -1898,3 +1956,4 @@ def run():
             traceback.print_exc()
 
 # End of file
+

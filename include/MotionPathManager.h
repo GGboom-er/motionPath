@@ -11,6 +11,7 @@
 
 #include "MotionPathEditContext.h"
 #include "MotionPath.h"
+#include "PickingGrid.h"
 
 #include <time.h>
 
@@ -42,6 +43,7 @@
 
 #include <vector>
 #include <map>
+#include <memory>
 
 struct RegisteredPanel
 {
@@ -71,7 +73,7 @@ public:
     void setTimeRange(const double start, const double end);
     bool expandParentMatrixAndPivotCache(const double currentTimeValue);
     MotionPath* getMotionPathPtr(const int id);
-    int getMotionPathsCount(){return pathArray.size();};
+    int getMotionPathsCount(){return static_cast<int>(pathArray.size());};
     void drawCurvesForSelection(M3dView &view, CameraCache *cachePtr);
 
     void addBufferPaths();
@@ -97,7 +99,11 @@ public:
     void clearParentMatrixCaches();
     
     CameraCache *getCameraCachePtrFromView(M3dView &view);
-    
+
+    // B1: Get picking grid for viewport (creates if needed)
+    PickingGrid* getPickingGrid(int viewportWidth, int viewportHeight);
+    void invalidatePickingGrid();
+
     void refreshCameraCallbackForPanel(const MString &panelName, MDagPath &camera);
     void createCameraCacheForCamera(const MDagPath &camera);
     
@@ -117,12 +123,16 @@ private:
     MCallbackIdArray cbIDs;
     RegisteredPanelArray registeredPanels;
     MObjectArray selectionObjects;
-    std::vector<MotionPath> pathArray;
+    std::vector<std::unique_ptr<MotionPath>> pathArray;
     std::vector<BufferPath> bufferPathArray;
     MAnimCurveChange* animCurveChangePtr;
     MDGModifier *dgModifierPtr;
     CameraCacheMap cameraCache;
-    
+
+    // B1: Spatial acceleration grid for fast picking
+    std::unique_ptr<PickingGrid> pickingGrid;
+    bool pickingGridValid;
+
     std::vector<MDoubleArray> previousKeySelection;
     
     int isMObjectContained(const MObject &obj, const MObjectArray &a);

@@ -37,6 +37,9 @@ MotionPathEditContext::MotionPathEditContext():
     this->capsLockCached = false;
     this->capsLockValid = false;
 
+    // Initialize VP2 flag
+    this->usingVP2 = false;
+
     setTitleString ("MotionPath Edit");
 }
 
@@ -77,9 +80,7 @@ void MotionPathEditContext::toolOffCleanup()
 	// Reset Caps Lock cache
 	capsLockValid = false;
 
-	// Restore OpenGL default state (Optimization 2)
-	glDisable(GL_LINE_SMOOTH);
-	glDisable(GL_BLEND);
+	// VP2-only: OpenGL state management removed
 
     for (int i = 0; i < mpManager.getMotionPathsCount(); ++i)
     {
@@ -113,14 +114,10 @@ void MotionPathEditContext::toolOnSetup( MEvent& event )
 	// Initialize Caps Lock cache
 	this->capsLockValid = false;
 
-	// Setup OpenGL state for drawing (Optimization 2)
-	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	glEnable(GL_LINE_SMOOTH);
-	glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+	// VP2-only: OpenGL state management removed
 
 	// set the help text in the maya help boxs
-	setHelpString("Left-Click: Select/Move; Shift+Left-Click: Add to selection; CTRL+Left-Click: Toggle selection; CTRL+Left-Click-Drag: Move Selection on the XY plane; CTRL+Middle-Click-Drag: Move Along Y Axis; Right-Click on path/frame/key: show menu");
+	setHelpString("Edit Mode (Caps OFF): Left-Click=Select/Move, Shift+Click=Add, Ctrl+Click=Toggle, Ctrl+Drag=Move XY, Ctrl+MMB=Move Y, Right-Click=Menu | Draw Mode (Caps ON): Drag from keyframe=Create path, Ctrl+Drag=Adjust keys");
 
     M3dView view = M3dView::active3dView();
 	view.refresh(true, true);
@@ -193,10 +190,8 @@ bool MotionPathEditContext::doPressCommon(MEvent &event, const bool old)
     CameraCache * cachePtr = mpManager.MotionPathManager::getCameraCachePtrFromView(activeView);
     
 	int selectedCurveId;
-	if (!old)
-		selectedCurveId = contextUtils::processCurveHits(initialX, initialY, GlobalSettings::cameraMatrix, activeView, cachePtr, mpManager);
-	else
-		selectedCurveId = contextUtils::processCurveHits(activeView, cachePtr, mpManager);
+	// A1: Always use coordinate-based picking (old GL selection buffer removed)
+	selectedCurveId = contextUtils::processCurveHits(initialX, initialY, GlobalSettings::cameraMatrix, activeView, cachePtr, mpManager);
 
     if (selectedCurveId != -1)
     {
@@ -216,10 +211,8 @@ bool MotionPathEditContext::doPressCommon(MEvent &event, const bool old)
             
             MIntArray selectedKeys;
 
-			if (!old)
-				contextUtils::processKeyFrameHits(initialX, initialY, selectedMotionPathPtr, activeView, GlobalSettings::cameraMatrix, cachePtr, selectedKeys);
-			else
-				contextUtils::processKeyFrameHits(selectedMotionPathPtr, activeView, cachePtr, selectedKeys);
+			// A1: Always use coordinate-based picking
+			contextUtils::processKeyFrameHits(initialX, initialY, selectedMotionPathPtr, activeView, GlobalSettings::cameraMatrix, cachePtr, selectedKeys);
 
             if (selectedKeys.length() == 0)
             {
@@ -228,10 +221,8 @@ bool MotionPathEditContext::doPressCommon(MEvent &event, const bool old)
                 {
                     int selectedKeyId;
 
-					if (!old)
-						contextUtils::processTangentHits(initialX, initialY, selectedMotionPathPtr, activeView, GlobalSettings::cameraMatrix, cachePtr, selectedKeyId, selectedTangent);
-					else
-						contextUtils::processTangentHits(selectedMotionPathPtr, activeView, cachePtr, selectedKeyId, selectedTangent);
+					// A1: Always use coordinate-based picking
+					contextUtils::processTangentHits(initialX, initialY, selectedMotionPathPtr, activeView, GlobalSettings::cameraMatrix, cachePtr, selectedKeyId, selectedTangent);
 
                     //move tangent
                     if (selectedTangent != -1)
@@ -300,14 +291,13 @@ bool MotionPathEditContext::doPressCommon(MEvent &event, const bool old)
     return true;
 }
 
-MStatus MotionPathEditContext::doPress(MEvent &event)
-{
-    return doPressCommon(event, true)? MStatus::kSuccess: MStatus::kFailure;
-}
+
 
 MStatus MotionPathEditContext::doPress(MEvent & event, MHWRender::MUIDrawManager& drawMgr, const MHWRender::MFrameContext& context)
 {
-    return doPressCommon(event, false) ? MStatus::kSuccess: MStatus::kFailure;
+    // VP2 path: Use MFrameContext for correct viewport handling
+    usingVP2 = true;
+    return doPressVP2(event, context) ? MStatus::kSuccess : MStatus::kFailure;
 }
 
 void MotionPathEditContext::doDragCommon(MEvent &event, const bool old)
@@ -325,15 +315,16 @@ void MotionPathEditContext::doDragCommon(MEvent &event, const bool old)
         mpManager.startAnimUndoRecording();
         startedRecording = true;
     }
-    
+
     short int thisX, thisY;
     event.getPosition(thisX, thisY);
-    M3dView view = M3dView::active3dView();
-    
+    // FIXED: Use activeView (set in doPress) instead of active3dView() to ensure coordinate system consistency
+    // This ensures we use the same viewport for coordinate conversion as was used to initiate the drag
+
     if (currentMode == kFrameEditMode)
     {
-        
-        MVector newPosition = contextUtils::getWorldPositionFromProjPoint(keyWorldPosition, initialX, initialY, thisX, thisY, view, cameraPosition);
+
+        MVector newPosition = contextUtils::getWorldPositionFromProjPoint(keyWorldPosition, initialX, initialY, thisX, thisY, activeView, cameraPosition);
          
         //if control is pressed with find the axis with the maximum value and we move the selected keyframes only on that axis
         if (alongPreferredAxis)
@@ -363,113 +354,46 @@ void MotionPathEditContext::doDragCommon(MEvent &event, const bool old)
             {
                 MDoubleArray selectedTimes = motionPath->getSelectedKeys();
                 for (int j = 0; j < static_cast<int>(selectedTimes.length()); j++)
-                    motionPath->offsetWorldPosition(GlobalSettings::motionPathDrawMode == GlobalSettings::kWorldSpace ? offset : offset * cachePtr->matrixCache[selectedTimes[j]].inverse(), selectedTimes[j], mpManager.getAnimCurveChangePtr());
+                {
+                    MVector finalOffset = offset;
+                    if (GlobalSettings::motionPathDrawMode != GlobalSettings::kWorldSpace) {
+                        finalOffset = offset * cachePtr->matrixCache[CameraCache::timeToTick(selectedTimes[j])].inverse();
+                    }
+                    motionPath->offsetWorldPosition(finalOffset, selectedTimes[j], mpManager.getAnimCurveChangePtr());
+                }
+                // F1/F3: 编辑关键帧后立即失效屏幕缓存并刷新显示范围，保证路径/关键帧跟手
+                motionPath->forceInvalidateScreenSpaceCache();
             }
         }
         
         lastWorldPosition = newPosition;
+        mpManager.refreshDisplayTimeRange();
     }
     else if (currentMode == kTangentEditMode)
     {
-        MVector newPosition = contextUtils::getWorldPositionFromProjPoint(tangentWorldPosition, initialX, initialY, thisX, thisY, view, cameraPosition);
+        MVector newPosition = contextUtils::getWorldPositionFromProjPoint(tangentWorldPosition, initialX, initialY, thisX, thisY, activeView, cameraPosition);
         
         MMatrix toWorldMatrix;
-        if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
-        {
-            CameraCache * cachePtr = mpManager.MotionPathManager::getCameraCachePtrFromView(activeView);
-            if (!cachePtr)
-                return;
-            //newPosition = MVector(MPoint(newPosition) * inverseCameraMatrix * cachePtr->matrixCache[lastSelectedTime].inverse());
-            toWorldMatrix = inverseCameraMatrix * cachePtr->matrixCache[lastSelectedTime].inverse();
-        }
-        else
-            toWorldMatrix.setToIdentity();
+        // F3: 统一使用世界坐标系更新切线，避免父/相机矩阵不一致导致视口/轨迹偏移
+        toWorldMatrix.setToIdentity();
         
         selectedMotionPathPtr->setTangentWorldPosition(newPosition, lastSelectedTime, (Keyframe::Tangent)selectedTangentId, toWorldMatrix, mpManager.getAnimCurveChangePtr());
-
+        selectedMotionPathPtr->forceInvalidateScreenSpaceCache();
+        mpManager.refreshDisplayTimeRange();
     }
 
-    // 保留刷新以提供实时视觉反馈（功能优先于优化）
-    view.refresh(true, true);
+    // VP2 Performance: Removed refresh() - VP2 handles automatic viewport updates during drag
+    // Manual refresh() in drag loop causes 50-200ms blocking per frame → stuttering
+    // VP2 will automatically refresh at appropriate times
 }
 
-MStatus MotionPathEditContext::doDrag(MEvent &event)
-{
-    if (selectedMotionPathPtr)
-    {
-        doDragCommon(event, true);
 
-        // Draw preview for Draw modes (Caps Lock ON)
-        // 使用缓存而非系统调用（优化13）
-        if (capsLockValid && capsLockCached)
-        {
-            if (drawMode == kDraw)
-            {
-                // Draw preview path and keyframes for kDraw mode (Legacy OpenGL)
-                activeView.beginXorDrawing(true, true, 2.0f, M3dView::kStippleNone);
-                drawPreviewPath();
-                activeView.endXorDrawing();
-            }
-            else if (drawMode == kStroke)
-            {
-                // Draw white stroke line for kStroke mode (Legacy OpenGL)
-                activeView.beginXorDrawing(true, true, 2.0f, M3dView::kStippleNone);
-
-                // Draw stroke with white line
-                if (drawStrokePoints.length() >= 2)
-                {
-                    glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    glEnable(GL_LINE_SMOOTH);
-                    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
-
-                    // Draw thick outer stroke for better visibility
-                    glLineWidth(4.0f);
-                    glColor4f(0.2f, 0.2f, 0.2f, 0.6f); // Dark semi-transparent outline
-                    glBegin(GL_LINE_STRIP);
-                    for (unsigned int i = 0; i < drawStrokePoints.length(); ++i)
-                        glVertex2f(static_cast<float>(drawStrokePoints[i].x), static_cast<float>(drawStrokePoints[i].y));
-                    glEnd();
-
-                    // Draw inner bright stroke
-                    glLineWidth(2.0f);
-                    glColor4f(1.0f, 1.0f, 1.0f, 0.95f); // Bright white
-                    glBegin(GL_LINE_STRIP);
-                    for (unsigned int i = 0; i < drawStrokePoints.length(); ++i)
-                        glVertex2f(static_cast<float>(drawStrokePoints[i].x), static_cast<float>(drawStrokePoints[i].y));
-                    glEnd();
-
-                    glDisable(GL_LINE_SMOOTH);
-                }
-
-                activeView.endXorDrawing();
-            }
-        }
-    }
-    else
-    {
-        activeView.beginXorDrawing();
-        // Redraw the marquee at its old position to erase it.
-        if (fsDrawn)
-            contextUtils::drawMarqueeGL(initialX, initialY, finalX, finalY);
-
-        fsDrawn = true;
-
-        event.getPosition( finalX, finalY );
-        // Draw the marquee at its new position.
-        contextUtils::drawMarqueeGL(initialX, initialY, finalX, finalY);
-
-        activeView.endXorDrawing();
-    }
-
-    return MStatus::kSuccess;
-}
 
 MStatus MotionPathEditContext::doDrag(MEvent & event, MHWRender::MUIDrawManager& drawMgr, const MHWRender::MFrameContext& context)
 {
-    if (selectedMotionPathPtr)
+    if (selectedMotionPathPtr && usingVP2)
     {
-        doDragCommon(event, false);
+        doDragVP2(event, context);
 
         // Draw preview for Draw modes (Caps Lock ON)
         if (isCapsLockOn())
@@ -529,9 +453,9 @@ MStatus MotionPathEditContext::doDrag(MEvent & event, MHWRender::MUIDrawManager&
                         MVector screenPos = drawStrokePoints[pointIndex];
 
                         drawMgr.setColor(GlobalSettings::previewKeyframeColor);
-                        drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 8.0, true);
-                        drawMgr.setColor(MColor(0.2, 0.2, 0.2));
-                        drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 9.0, false);
+                        drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 8.0f, true);
+                        drawMgr.setColor(MColor(0.2f, 0.2f, 0.2f));
+                        drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 9.0f, false);
                     }
 
                     drawMgr.endDrawable();
@@ -575,6 +499,8 @@ void MotionPathEditContext::doReleaseCommon(MEvent &event, const bool old)
         alongPreferredAxis = false;
         prefEditAxis = -1;
         
+        // F1: 编辑结束后立即刷新显示范围，确保关键帧/路径立刻更新
+        mpManager.refreshDisplayTimeRange();
         M3dView view = M3dView::active3dView();
 		view.refresh(true, true);
     }
@@ -582,26 +508,29 @@ void MotionPathEditContext::doReleaseCommon(MEvent &event, const bool old)
     {
         event.getPosition( finalX, finalY );
         
-        if (fsDrawn && old)
-        {
-            activeView.beginXorDrawing();
-            contextUtils::drawMarqueeGL(initialX, initialY, finalX, finalY);
-            activeView.endXorDrawing();
-        }
+// A1: Legacy GL path removed - VP2 handles selection natively
+//         if (fsDrawn && old)
+// A1: Legacy GL path removed - VP2 handles selection natively
+//         {
+// A1: Legacy GL path removed - VP2 handles selection natively
+//             activeView.beginXorDrawing();
+// A1: Legacy GL path removed - VP2 handles selection natively
+//             contextUtils::drawMarqueeGL(initialX, initialY, finalX, finalY);
+// A1: Legacy GL path removed - VP2 handles selection natively
+//             activeView.endXorDrawing();
+// A1: Legacy GL path removed - VP2 handles selection natively
+//         }
         
         contextUtils::applySelection(initialX, initialY, finalX, finalY, listAdjustment);
     }
 }
 
-MStatus MotionPathEditContext::doRelease(MEvent &event)
-{
-    doReleaseCommon(event, true);
-    return MStatus::kSuccess;
-}
+
 
 MStatus MotionPathEditContext::doRelease(MEvent & event, MHWRender::MUIDrawManager& drawMgr, const MHWRender::MFrameContext& context)
 {
-    doReleaseCommon(event, false);
+    // VP2 path: Use MFrameContext for correct viewport handling
+    doReleaseVP2(event, context);
     return MS::kSuccess;
 }
 
@@ -650,10 +579,8 @@ bool MotionPathEditContext::handleDrawModePress(MEvent &event, const bool old)
 
     CameraCache * cachePtr = mpManager.MotionPathManager::getCameraCachePtrFromView(activeView);
     int selectedCurveId;
-    if (!old)
-        selectedCurveId = contextUtils::processCurveHits(initialX, initialY, GlobalSettings::cameraMatrix, activeView, cachePtr, mpManager);
-    else
-        selectedCurveId = contextUtils::processCurveHits(activeView, cachePtr, mpManager);
+    // A1: Always use coordinate-based picking
+    selectedCurveId = contextUtils::processCurveHits(initialX, initialY, GlobalSettings::cameraMatrix, activeView, cachePtr, mpManager);
 
     if (selectedCurveId != -1)
     {
@@ -663,10 +590,8 @@ bool MotionPathEditContext::handleDrawModePress(MEvent &event, const bool old)
             selectedMotionPathPtr->setSelectedFromTool(true);
 
             MIntArray ids;
-            if (!old)
-                contextUtils::processKeyFrameHits(initialX, initialY, selectedMotionPathPtr, activeView, GlobalSettings::cameraMatrix, cachePtr, ids);
-            else
-                contextUtils::processKeyFrameHits(selectedMotionPathPtr, activeView, cachePtr, ids);
+            // A1: Always use coordinate-based picking
+            contextUtils::processKeyFrameHits(initialX, initialY, selectedMotionPathPtr, activeView, GlobalSettings::cameraMatrix, cachePtr, ids);
             if (ids.length() > 0)
             {
                 drawSelectedKeyId = ids[ids.length() - 1];
@@ -976,11 +901,14 @@ bool MotionPathEditContext::handleDrawModeRelease(MEvent &event, const bool old)
         selectedMotionPathPtr = NULL;
         drawMode = kDrawNone;
         drawStrokePoints.clear();
+        currentMode = kNoneMode;  // BUG #4 修复: 重置模式，允许后续编辑
     }
     return true;
 }
 
 // === Draw mode preview rendering (OpenGL) ===
+// A1: DEPRECATED - GL immediate mode removed, VP2 handles all rendering
+/*
 // Initialize pre-computed circle vertices (Optimization 3)
 void MotionPathEditContext::initializeCircleVertices()
 {
@@ -1070,6 +998,7 @@ void MotionPathEditContext::drawPreviewPath()
 }
 
 void MotionPathEditContext::drawPreviewKeyframes() {}
+*/
 
 // === Helper functions for kStroke mode ===
 MVector MotionPathEditContext::getkeyScreenPosition(const double time)
@@ -1103,13 +1032,13 @@ int MotionPathEditContext::getStrokeDirection(MVector directionalVector, const M
 
 MVector MotionPathEditContext::getClosestPointOnPolyLine(const MVector &q)
 {
-    const int count = drawStrokePoints.length();
+    const unsigned int count = static_cast<unsigned int>(drawStrokePoints.length());
     double finalT = 0;
     int index = 0;
 
     MVector b = drawStrokePoints[0], dbq = b - q;
     double dist = (dbq.x*dbq.x + dbq.y*dbq.y);
-    for (size_t i = 1; i < count; ++i)
+    for (unsigned int i = 1; i < count; ++i)
     {
         const MVector a = b, daq = dbq;
 
@@ -1134,7 +1063,7 @@ MVector MotionPathEditContext::getClosestPointOnPolyLine(const MVector &q)
         {
             dist = current_dist;
             finalT = t > 1 ? 1: t;
-            index = i;
+            index = static_cast<int>(i);
         }
     }
 

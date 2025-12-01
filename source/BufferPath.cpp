@@ -8,7 +8,7 @@
 
 #include "BufferPath.h"
 #include "GlobalSettings.h"
-#include "DrawUtils.h"
+// A1: Legacy GL removed - using VP2DrawUtils only
 #include "Vp2DrawUtils.h"
 
 BufferPath::BufferPath()
@@ -19,7 +19,7 @@ BufferPath::BufferPath()
 
 void BufferPath::drawFrames(const double startTime, const double endTime, const MColor &curveColor, CameraCache* cachePtr, const MMatrix &currentCameraMatrix, M3dView &view, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext)
 {
-    int frameSize = frames.size();
+    int frameSize = static_cast<int>(frames.size());
 
     if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
     {
@@ -47,46 +47,26 @@ void BufferPath::drawFrames(const double startTime, const double endTime, const 
         if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
         {
             cachePtr->ensureMatricesAtTime(i);
-            pos1 = MPoint(pos1) * cachePtr->matrixCache[i] * currentCameraMatrix;
-            pos2 = MPoint(pos2) * cachePtr->matrixCache[i-1] * currentCameraMatrix;
+            pos1 = MPoint(pos1) * cachePtr->matrixCache[CameraCache::timeToTick(i)] * currentCameraMatrix;
+            pos2 = MPoint(pos2) * cachePtr->matrixCache[CameraCache::timeToTick(i-1)] * currentCameraMatrix;
         }
 
 		if (GlobalSettings::showPath)
 		{
             // For VP2, still draw individually (VP2 has its own batching)
-			if (drawManager)
-				VP2DrawUtils::drawLineWithColor(pos1, pos2, GlobalSettings::pathSize, curveColor, currentCameraMatrix, drawManager, frameContext);
-			else
-            {
-                // Batch lines for legacy OpenGL
-                lineVertices.push_back(pos2);
-                lineVertices.push_back(pos1);
-            }
+			VP2DrawUtils::drawLineWithColor(pos1, pos2, static_cast<float>(GlobalSettings::pathSize), curveColor, currentCameraMatrix, drawManager, frameContext);
 		}
 
-		if (drawManager)
-			VP2DrawUtils::drawPointWithColor(pos2, GlobalSettings::frameSize, curveColor, currentCameraMatrix, drawManager, frameContext);
-		else
-            pointVertices.push_back(pos2);
+		VP2DrawUtils::drawPointWithColor(pos2, static_cast<float>(GlobalSettings::frameSize), curveColor, currentCameraMatrix, drawManager, frameContext);
 
         if (i == endTime || i == minTime + frameSize - 1)
 		{
-			if (drawManager)
-				VP2DrawUtils::drawPointWithColor(pos1, GlobalSettings::frameSize, curveColor, currentCameraMatrix, drawManager, frameContext);
-			else
-                pointVertices.push_back(pos1);
+			VP2DrawUtils::drawPointWithColor(pos1, static_cast<float>(GlobalSettings::frameSize), curveColor, currentCameraMatrix, drawManager, frameContext);
 		}
 	}
 
     // Batch draw for legacy OpenGL
-    if (!drawManager)
-    {
-        if (GlobalSettings::showPath && !lineVertices.empty())
-            drawUtils::drawLineArray(lineVertices, GlobalSettings::pathSize, curveColor);
-
-        if (!pointVertices.empty())
-            drawUtils::drawPointArray(pointVertices, GlobalSettings::frameSize, curveColor);
-    }
+    // VP2-only: Legacy OpenGL path removed
 }
 
 void BufferPath::drawKeyFrames(const double startTime, const double endTime, const MColor &curveColor, CameraCache* cachePtr, const MMatrix &currentCameraMatrix, M3dView &view, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext)
@@ -101,13 +81,10 @@ void BufferPath::drawKeyFrames(const double startTime, const double endTime, con
             {
                 if (!cachePtr) continue;
                 cachePtr->ensureMatricesAtTime(time);
-                pos = MPoint(pos) * cachePtr->matrixCache[time] * currentCameraMatrix;
+                pos = MPoint(pos) * cachePtr->matrixCache[CameraCache::timeToTick(time)] * currentCameraMatrix;
             }
-            
-			if (drawManager)
-				VP2DrawUtils::drawPointWithColor(pos, GlobalSettings::frameSize, curveColor, GlobalSettings::cameraMatrix, drawManager, frameContext);
-			else
-				drawUtils::drawPointWithColor(pos, GlobalSettings::frameSize * 1.5, curveColor);
+
+			VP2DrawUtils::drawPointWithColor(pos, static_cast<float>(GlobalSettings::frameSize), curveColor, GlobalSettings::cameraMatrix, drawManager, frameContext);
         }
     }
 }
@@ -118,12 +95,12 @@ void BufferPath::draw(M3dView &view, CameraCache* cachePtr, MHWRender::MUIDrawMa
     
     if(selected)
     {
-        curveColor.r = 1.0 - curveColor.r;
-        curveColor.g = 1.0 - curveColor.g;
-        curveColor.b = 1.0 - curveColor.b;
+        curveColor.r = 1.0f - curveColor.r;
+        curveColor.g = 1.0f - curveColor.g;
+        curveColor.b = 1.0f - curveColor.b;
     }
-    
-    curveColor.a = 0.5;
+
+    curveColor.a = 0.5f;
     
     double currentTime = MAnimControl::currentTime().as(MTime::uiUnit());
     
@@ -136,7 +113,7 @@ void BufferPath::draw(M3dView &view, CameraCache* cachePtr, MHWRender::MUIDrawMa
         if (!cachePtr) return;
         double currentTime = MAnimControl::currentTime().as(MTime::uiUnit());
         cachePtr->ensureMatricesAtTime(currentTime);
-        currentCameraMatrix = cachePtr->matrixCache[currentTime].inverse();
+        currentCameraMatrix = cachePtr->matrixCache[CameraCache::timeToTick(currentTime)].inverse();
     }
     
     drawFrames(startTime, endTime, curveColor, cachePtr, GlobalSettings::cameraMatrix, view, drawManager, frameContext);
@@ -146,8 +123,8 @@ void BufferPath::draw(M3dView &view, CameraCache* cachePtr, MHWRender::MUIDrawMa
     //draw current frame
     if (currentTime >= minTime && currentTime <= minTime + frames.size())
     {
-        MColor currentColor = GlobalSettings::currentFrameColor * 0.8;
-        currentColor.a = 0.7;
+        MColor currentColor = GlobalSettings::currentFrameColor * 0.8f;
+        currentColor.a = 0.7f;
         
 		int numFrame = static_cast<int>(currentTime) - static_cast<int>(minTime);
 		if (numFrame < 0 || numFrame > frames.size() - 1)
@@ -157,12 +134,9 @@ void BufferPath::draw(M3dView &view, CameraCache* cachePtr, MHWRender::MUIDrawMa
         if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
         {
             cachePtr->ensureMatricesAtTime(currentTime);
-            pos = MPoint(pos) * cachePtr->matrixCache[currentTime] * currentCameraMatrix;
+            pos = MPoint(pos) * cachePtr->matrixCache[CameraCache::timeToTick(currentTime)] * currentCameraMatrix;
         }
         
-		if (drawManager)
-			VP2DrawUtils::drawPointWithColor(pos, GlobalSettings::frameSize, curveColor, GlobalSettings::cameraMatrix, drawManager, frameContext);
-		else
-			drawUtils::drawPointWithColor(pos, GlobalSettings::frameSize * 1.6, currentColor);
+		VP2DrawUtils::drawPointWithColor(pos, static_cast<float>(GlobalSettings::frameSize), curveColor, GlobalSettings::cameraMatrix, drawManager, frameContext);
     }
 }

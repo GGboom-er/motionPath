@@ -803,13 +803,13 @@ MStatus MotionPathCmd::undoIt()
 
 void MotionPathCmd::restoreKeySelection(const std::vector<MDoubleArray> &sel)
 {
-    for (int i = 0; i < sel.size(); ++i)
+    for (size_t i = 0; i < sel.size(); ++i)
     {
         MotionPath *motionPathPtr = mpManager.getMotionPathPtr(i);
         if (motionPathPtr)
         {
             motionPathPtr->deselectAllKeys();
-            for (int j = 0; j < sel[i].length(); ++j)
+            for (unsigned int j = 0; j < sel[i].length(); ++j)
                 motionPathPtr->selectKeyAtTime(sel[i][j]);
         }
     }

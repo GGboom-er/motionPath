@@ -26,12 +26,17 @@
 #include <maya/MViewport2Renderer.h>
 
 #include <Keyframe.h>
-#include <DrawUtils.h>
 #include <BufferPath.h>
 #include "KeyClipboard.h"
 #include "CameraCache.h"
 
 #include <map>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
+#include <chrono>
+#include <cstdint>
+#include <cmath>
 
 class MotionPath
 {
@@ -49,12 +54,12 @@ class MotionPath
     
         bool isConstrained(){return constrained;};
     
-        void selectKeyAtTime(const double time){selectedKeyTimes.insert(time);};
+        void selectKeyAtTime(const double time){selectedKeyTimes.insert(timeToTick(time));};
         void deselectAllKeys(){selectedKeyTimes.clear();};
-        void deselectKeyAtTime(const double time){if (isKeyAtTimeSelected(time)) selectedKeyTimes.erase(time);};
+        void deselectKeyAtTime(const double time){selectedKeyTimes.erase(timeToTick(time));};
         void selectAllKeys();
         void invertKeysSelection();
-        bool isKeyAtTimeSelected(const double time){return selectedKeyTimes.find(time)!=selectedKeyTimes.end();};
+        bool isKeyAtTimeSelected(const double time){return selectedKeyTimes.find(timeToTick(time))!=selectedKeyTimes.end();};
         MDoubleArray getSelectedKeys();
         MDoubleArray getKeys();
     
@@ -96,6 +101,7 @@ class MotionPath
     
         void clearParentMatrixCache();
         void cacheParentMatrixRange();
+        void cacheParentMatrixRange(double startFrame, double endFrame);
     
         void setIsDrawing(const bool value){isDrawing = value;};
         void setEndrawingTime(const double value){endDrawingTime = value;};
@@ -119,6 +125,7 @@ class MotionPath
 
 		KeyframeMap *keyFramesCachePtr() { return &keyframesCache; }
 		void getFramePositions(std::vector<std::pair<int, MVector>> &vec);
+		const std::unordered_map<int64_t, MPoint>& getFrameScreenPositions() const { return frameScreenSpacePositions; }
 
     private:
     
@@ -131,7 +138,7 @@ class MotionPath
         bool constrained;
         bool selectedFromTool;
         MPlug pMatrixPlug;
-        std::map<double, MMatrix> pMatrixCache;
+        std::unordered_map<int64_t, MMatrix> pMatrixCache;
         bool cacheDone;
         bool worldSpaceCallbackCalled;
         KeyframeMap keyframesCache;
@@ -139,20 +146,81 @@ class MotionPath
         MCallbackId worldMatrixCallbackId;
     
         MObject tempAncestorNode;
-    
-        std::map<double, MPoint> frameScreenSpacePositions;
-    
+
+        std::unordered_map<int64_t, MPoint> frameScreenSpacePositions;
+        std::unordered_map<int64_t, std::vector<Keyframe*>> keyScreenBuckets;
+        struct TangentBucketEntry {
+            Keyframe* key;
+            Keyframe::Tangent tangentId;
+        };
+        std::unordered_map<int64_t, std::vector<TangentBucketEntry>> tangentScreenBuckets;
+        std::unordered_map<int64_t, std::vector<int64_t>> frameScreenBuckets;
+
         //Pivot stuff
         MPlug rpxPlug, rpyPlug, rpzPlug, rptxPlug, rptyPlug, rptzPlug;
         //
     
         bool isWeighted;
-    
-        std::set<double> selectedKeyTimes;
+
+        std::unordered_set<int64_t> selectedKeyTimes;
     
         bool isDrawing;
         double endDrawingTime;
-    
+
+        // Cache optimization fields
+        double cachedRangeStart;
+        double cachedRangeEnd;
+        bool pMatrixCacheValid;
+        std::unordered_map<int64_t, MVector> drawPositionCache;
+
+        // VP2 Performance: Screen-space coordinate cache system
+        bool screenSpaceCacheValid;
+        MMatrix lastCameraMatrix;
+        int lastViewportWidth;
+        int lastViewportHeight;
+        static constexpr double SCREEN_BUCKET_SIZE = 16.0;
+
+        void invalidateScreenSpaceCache() {
+            screenSpaceCacheValid = false;
+            frameScreenSpacePositions.clear();
+            keyScreenBuckets.clear();
+            tangentScreenBuckets.clear();
+            frameScreenBuckets.clear();
+            // BUG #5 修复: 清空位置缓存，确保下次draw()时重新计算
+            drawPositionCache.clear();
+        }
+        bool needsScreenSpaceUpdate(const MMatrix& cameraMatrix, int width, int height) const {
+            return !screenSpaceCacheValid ||
+                   !(cameraMatrix == lastCameraMatrix) ||
+                   width != lastViewportWidth ||
+                   height != lastViewportHeight;
+        }
+
+    public:
+        bool hasKeyBuckets() const { return screenSpaceCacheValid && !keyScreenBuckets.empty(); }
+        bool hasTangentBuckets() const { return screenSpaceCacheValid && !tangentScreenBuckets.empty(); }
+        bool hasFrameBuckets() const { return screenSpaceCacheValid && !frameScreenBuckets.empty(); }
+        // Exposed helper to强制失效屏幕缓存（供交互层调用）
+        void forceInvalidateScreenSpaceCache() { invalidateScreenSpaceCache(); }
+        int bucketX(double x) const { return static_cast<int>(std::floor(x / SCREEN_BUCKET_SIZE)); }
+        int bucketY(double y) const { return static_cast<int>(std::floor(y / SCREEN_BUCKET_SIZE)); }
+        static int64_t bucketKey(int bx, int by) {
+            return (static_cast<int64_t>(static_cast<uint32_t>(bx)) << 32) | static_cast<uint32_t>(by);
+        }
+        int64_t bucketKeyForPoint(double x, double y) const { return bucketKey(bucketX(x), bucketY(y)); }
+        const std::unordered_map<int64_t, std::vector<Keyframe*>>& getKeyBuckets() const { return keyScreenBuckets; }
+        const std::unordered_map<int64_t, std::vector<TangentBucketEntry>>& getTangentBuckets() const { return tangentScreenBuckets; }
+        const std::unordered_map<int64_t, std::vector<int64_t>>& getFrameBuckets() const { return frameScreenBuckets; }
+
+    private:
+        // A2: Time to tick conversion helpers (Maya uses 6000 ticks per time unit)
+        static inline int64_t timeToTick(double time) {
+            return static_cast<int64_t>(time * 6000.0 + 0.5);
+        }
+        static inline double tickToTime(int64_t tick) {
+            return static_cast<double>(tick) / 6000.0;
+        }
+
         void ensureParentAndPivotMatrixAtTime(const double time);
         MMatrix getPMatrixAtTime(const MTime &evalTime);
         MMatrix getPivotMatrix(const MTime &evalTime);
@@ -198,7 +266,12 @@ class MotionPath
         int getMinTime(MFnAnimCurve &curveX, MFnAnimCurve &curveY, MFnAnimCurve &curveZ);
         int getMaxTime(MFnAnimCurve &curveX, MFnAnimCurve &curveY, MFnAnimCurve &curveZ);
         void expandeBufferPathKeyFrames(MFnAnimCurve &curve, std::map<double, MVector> &keyFrames);
-    
+
+        // Draw optimization functions
+        void cachePositionsForDraw(double startTime, double endTime);
+        MVector getCachedPos(double time);
+        bool shouldDrawDetails();
+
         static void worldMatrixChangedCallback(MObject& transformNode, MDagMessage::MatrixModifiedFlags& modified, void* data);
         void cacheParentMatrixRangeForWorldCallback(MObject &transformNode);
 

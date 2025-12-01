@@ -55,6 +55,8 @@ void MotionPathDrawContext::toolOffCleanup()
     view.refresh();
 }
 
+// A1: Legacy GL removed - use drawStrokeNew instead
+/*
 void MotionPathDrawContext::drawStroke()
 {
     if (strokePoints.length() < 2)
@@ -84,10 +86,12 @@ void MotionPathDrawContext::drawStroke()
 
     glDisable(GL_LINE_SMOOTH);
 }
+*/
 
 void MotionPathDrawContext::drawStrokeNew(MHWRender::MUIDrawManager& drawMgr)
 {
-    if (strokePoints.length() < 2)
+    const unsigned int strokeCount = strokePoints.length();
+    if (strokeCount < 2)
         return;
 
     // Performance optimization: Batch draw all segments
@@ -97,13 +101,13 @@ void MotionPathDrawContext::drawStrokeNew(MHWRender::MUIDrawManager& drawMgr)
     drawMgr.setLineWidth(4.0f);
     drawMgr.setColor(MColor(0.2f, 0.2f, 0.2f, 0.6f));
     drawMgr.setLineStyle(MHWRender::MUIDrawManager::kSolid);
-    for (int i = 1; i < strokePoints.length(); ++i)
+    for (unsigned int i = 1; i < strokeCount; ++i)
         drawMgr.line2d(strokePoints[i-1], strokePoints[i]);
 
     // Draw bright center line
     drawMgr.setLineWidth(2.0f);
     drawMgr.setColor(MColor(1.0f, 1.0f, 1.0f, 0.95f));
-    for (int i = 1; i < strokePoints.length(); ++i)
+    for (unsigned int i = 1; i < strokeCount; ++i)
         drawMgr.line2d(strokePoints[i-1], strokePoints[i]);
 
     drawMgr.endDrawable();
@@ -176,10 +180,8 @@ bool MotionPathDrawContext::doPressCommon(MEvent &event, const bool old)
     
 	CameraCache * cachePtr = mpManager.MotionPathManager::getCameraCachePtrFromView(activeView);
 	int selectedCurveId;
-	if (!old)
-		selectedCurveId = contextUtils::processCurveHits(initialX, initialY, GlobalSettings::cameraMatrix, activeView, cachePtr, mpManager);
-	else
-		selectedCurveId = contextUtils::processCurveHits(activeView, cachePtr, mpManager);
+	// A1: Always use coordinate-based picking (old GL selection buffer removed)
+	selectedCurveId = contextUtils::processCurveHits(initialX, initialY, GlobalSettings::cameraMatrix, activeView, cachePtr, mpManager);
 
     if (selectedCurveId != -1)
     {
@@ -189,10 +191,8 @@ bool MotionPathDrawContext::doPressCommon(MEvent &event, const bool old)
             selectedMotionPathPtr->setSelectedFromTool(true);
                 
             MIntArray ids;
-			if (!old)
-				contextUtils::processKeyFrameHits(initialX, initialY, selectedMotionPathPtr, activeView, GlobalSettings::cameraMatrix, cachePtr, ids);
-			else
-				contextUtils::processKeyFrameHits(selectedMotionPathPtr, activeView, cachePtr, ids);
+			// A1: Always use coordinate-based picking
+			contextUtils::processKeyFrameHits(initialX, initialY, selectedMotionPathPtr, activeView, GlobalSettings::cameraMatrix, cachePtr, ids);
             if (ids.length() > 0)
             {
                 selectedKeyId = ids[ids.length() - 1];
@@ -236,9 +236,9 @@ bool MotionPathDrawContext::doPressCommon(MEvent &event, const bool old)
 
                     initialClock = clock();
                 }
-                    
-                activeView.refresh();
-                    
+
+                // VP2 Performance: Removed refresh() from drag loop - VP2 auto-updates
+
                 return true;
             }
         }
@@ -254,10 +254,8 @@ bool MotionPathDrawContext::doPressCommon(MEvent &event, const bool old)
     return false;
 }
 
-MStatus MotionPathDrawContext::doPress(MEvent &event)
-{
-    return doPressCommon(event, true) ? MStatus::kSuccess: MStatus::kFailure;
-}
+// Legacy OpenGL version removed - VP2-only mode
+// MStatus MotionPathDrawContext::doPress(MEvent &event) - DELETED
 
 MStatus MotionPathDrawContext::doPress(MEvent & event, MHWRender::MUIDrawManager& drawMgr, const MHWRender::MFrameContext& context)
 {
@@ -293,8 +291,7 @@ bool MotionPathDrawContext::doDragCommon(MEvent &event, const bool old)
                 if (distance > threshold)
                 {
                     strokePoints.append(v);
-                    if (strokePoints.length() % 20 == 0)  // Log every 20 points
-                        MGlobal::displayInfo(MString("[MotionPath] Preview path points collected: ") + strokePoints.length());
+                    // 移除热路径日志以提升性能 (Draw-1 优化)
                 }
             }
             else
@@ -311,72 +308,8 @@ bool MotionPathDrawContext::doDragCommon(MEvent &event, const bool old)
     return true;
 }
 
-MStatus MotionPathDrawContext::doDrag(MEvent &event)
-{
-    event.getPosition( finalX, finalY );
-    
-    if (selectedMotionPathPtr)
-    {
-        if (currentMode == kStroke)
-        {
-            activeView.beginXorDrawing(true, true, 2.0f, M3dView::kStippleNone);
-
-            drawStroke();
-
-            // Performance & Visual optimization: Adaptive sampling based on speed
-            MVector v(finalX, finalY, 0);
-            if (strokePoints.length() > 0)
-            {
-                double distance = (v - strokePoints[strokePoints.length()-1]).length();
-                // Adaptive threshold: closer points when moving slowly for precision
-                double threshold = 8.0; // Reduced from 20 for smoother curves
-                if (distance > threshold)
-                    strokePoints.append(v);
-            }
-            else
-            {
-                strokePoints.append(v);
-            }
-
-            drawStroke();
-
-            activeView.endXorDrawing();
-
-            return MStatus::kSuccess;
-        }
-        else if (currentMode == kDraw)
-        {
-            // Collect path points via doDragCommon
-            doDragCommon(event, true);
-
-            // Draw preview path and keyframes for legacy viewport
-            activeView.beginXorDrawing(true, true, 2.0f, M3dView::kStippleNone);
-
-            drawPreviewPath();
-
-            activeView.endXorDrawing();
-
-            return MStatus::kSuccess;
-        }
-        else
-            return doDragCommon(event, true) ? MStatus::kSuccess: MStatus::kFailure;
-    }
-    else
-    {
-        activeView.beginXorDrawing();
-        // Redraw the marquee at its old position to erase it.
-        if (fsDrawn)
-            contextUtils::drawMarqueeGL(initialX, initialY, finalX, finalY);
-        
-        fsDrawn = true;
-        
-        // Draw the marquee at its new position.
-        contextUtils::drawMarqueeGL(initialX, initialY, finalX, finalY);
-        
-        activeView.endXorDrawing();
-    }
-    return MStatus::kSuccess;
-}
+// Legacy OpenGL version removed - VP2-only mode
+// MStatus MotionPathDrawContext::doDrag(MEvent &event) - DELETED (65 lines of XorDrawing code)
 
 MStatus MotionPathDrawContext::doDrag(MEvent & event, MHWRender::MUIDrawManager& drawMgr, const MHWRender::MFrameContext& context)
 {
@@ -414,9 +347,8 @@ MStatus MotionPathDrawContext::doDrag(MEvent & event, MHWRender::MUIDrawManager&
             // Draw preview path and keyframes for kDraw mode
             if (strokePoints.length() > 1)
             {
-                static int debugCounter = 0;
-                if (++debugCounter % 30 == 0)  // Log every 30 frames
-                    MGlobal::displayInfo(MString("[MotionPath] Drawing preview: ") + strokePoints.length() + " points, " + GlobalSettings::drawKeyframeCount + " keyframes");
+                // 移除热路径日志以提升性能 (Draw-1 优化)
+                // 拖拽预览性能优化:移除每 30 帧的调试输出
 
                 // Draw preview path
                 drawMgr.beginDrawable();
@@ -434,7 +366,7 @@ MStatus MotionPathDrawContext::doDrag(MEvent & event, MHWRender::MUIDrawManager&
 
                 // Draw preview keyframe markers (skip start point)
                 int keyframeCount = GlobalSettings::drawKeyframeCount;
-                int totalPoints = strokePoints.length();
+                int totalPoints = static_cast<int>(strokePoints.length());
 
                 for (int i = 0; i < keyframeCount; ++i)
                 {
@@ -446,9 +378,9 @@ MStatus MotionPathDrawContext::doDrag(MEvent & event, MHWRender::MUIDrawManager&
                     MVector screenPos = strokePoints[pointIndex];
 
                     drawMgr.setColor(GlobalSettings::previewKeyframeColor);
-                    drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 8.0, true);
+                    drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 8.0f, true);
                     drawMgr.setColor(MColor(0.2, 0.2, 0.2));
-                    drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 9.0, false);
+                    drawMgr.circle2d(MPoint(screenPos.x, screenPos.y), 9.0f, false);
                 }
 
                 drawMgr.endDrawable();
@@ -756,7 +688,7 @@ bool MotionPathDrawContext::doReleaseCommon(MEvent &event, const bool old)
                     // Calculate corresponding time (start from selectedTime + frameInterval)
                     double keyTime = selectedTime + ((i + 1) * frameInterval);
 
-                    MGlobal::displayInfo(MString("[MotionPath] Keyframe ") + i + " using point " + pointIndex + "/" + totalPoints + " at time " + keyTime);
+                    // 移除热路径日志以提升性能 (Draw-1 优化)
 
                     // Convert screen position to world position
                     MVector worldPos = contextUtils::getWorldPositionFromProjPoint(
@@ -778,11 +710,11 @@ bool MotionPathDrawContext::doReleaseCommon(MEvent &event, const bool old)
                     // Add keyframe (useCache=false for batch operation)
                     selectedMotionPathPtr->addKeyFrameAtTime(keyTime, mpManager.getAnimCurveChangePtr(), &worldPos, false);
 
-                    if (i == 0 || i == keyframeCount - 1)
-                        MGlobal::displayInfo(MString("[MotionPath] Added keyframe at time ") + keyTime);
+                    // 移除热路径日志以提升性能 (Draw-1 优化)
                 }
 
-                MGlobal::displayInfo(MString("[MotionPath] Successfully added ") + keyframeCount + " keyframes");
+                // 移除热路径日志以提升性能 (Draw-1 优化)
+                // 用户可通过 UI 反馈或最终的关键帧数量确认操作成功
 
                 // Update end drawing time
                 selectedMotionPathPtr->setEndrawingTime(rangeEnd);
@@ -815,7 +747,8 @@ bool MotionPathDrawContext::doReleaseCommon(MEvent &event, const bool old)
         if (fsDrawn && old)
         {
             activeView.beginXorDrawing();
-            contextUtils::drawMarqueeGL(initialX, initialY, finalX, finalY);
+            // A1: drawMarqueeGL removed - VP2 handles marquee natively
+            // contextUtils::drawMarqueeGL(initialX, initialY, finalX, finalY);
             activeView.endXorDrawing();
         }
         
@@ -825,16 +758,16 @@ bool MotionPathDrawContext::doReleaseCommon(MEvent &event, const bool old)
     return 1;
 }
 
-MStatus MotionPathDrawContext::doRelease(MEvent &event)
-{
-    return doReleaseCommon(event, true) ? MStatus::kSuccess: MStatus::kFailure;
-}
+// Legacy OpenGL version removed - VP2-only mode
+// MStatus MotionPathDrawContext::doRelease(MEvent &event) - DELETED
 
 MStatus MotionPathDrawContext::doRelease(MEvent & event, MHWRender::MUIDrawManager& drawMgr, const MHWRender::MFrameContext& context)
 {
     return doReleaseCommon(event, false) ? MStatus::kSuccess: MStatus::kFailure;
 }
 
+// A1: DEPRECATED - GL immediate mode removed, VP2 handles all rendering
+/*
 // Draw preview path and keyframe markers for kDraw mode (legacy OpenGL)
 void MotionPathDrawContext::drawPreviewPath()
 {
@@ -909,6 +842,7 @@ void MotionPathDrawContext::drawPreviewPath()
     glDisable(GL_LINE_SMOOTH);
     glDisable(GL_BLEND);
 }
+*/
 
 // Helper function: Calculate total length of polyline path
 double MotionPathDrawContext::calculatePathLength(const MVectorArray &points)

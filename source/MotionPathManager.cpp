@@ -26,6 +26,10 @@ MotionPathManager::MotionPathManager()
     selectionObjects.clear();
     bufferPathArray.clear();
     cameraCache.clear();
+
+    // B1: Initialize picking grid
+    pickingGrid = nullptr;
+    pickingGridValid = false;
 }
 
 MotionPathManager::~MotionPathManager()
@@ -309,88 +313,14 @@ void MotionPathManager::drawBufferPaths(M3dView &view, CameraCache* cachePtr, MH
 void MotionPathManager::drawPaths(M3dView view, CameraCache* cachePtr, MHWRender::MUIDrawManager* drawManager, const MHWRender::MFrameContext* frameContext)
 {
 	for (int i = 0; i < pathArray.size(); ++i)
-		pathArray[i].draw(view, cachePtr, drawManager, frameContext);
+		pathArray[i]->draw(view, cachePtr, drawManager, frameContext);
 }
 
 void MotionPathManager::viewPostRenderCallback(const MString& panelName, void* data)
 {
-    MotionPathManager* mpManager = (MotionPathManager*) data;
-    
-	if(mpManager)
-	{
-		M3dView view;
-		MStatus status = M3dView::getM3dViewFromModelPanel(panelName, view);
-		if(status && view.display())
-		{
-            MDagPath camera;
-            view.getCamera(camera);
-            
-            CameraCache* cachePtr = NULL;
-            
-            GlobalSettings::cameraMatrix = camera.inclusiveMatrix();
-            
-            //world space mode
-            if (GlobalSettings::motionPathDrawMode == GlobalSettings::kWorldSpace)
-            {
-                GlobalSettings::portWidth = view.portWidth();
-                GlobalSettings::portHeight = view.portHeight();
-            }
-            else // camera space mode
-            {
-                cachePtr = mpManager->getCameraCachePtrFromView(view);
-                if (!cachePtr)
-                    return;
-                
-                if (!cachePtr->isInitialized())
-                {
-                    cachePtr->initialize(camera.node());
-                    cachePtr->cacheCamera();
-                }
-                
-                cachePtr->portWidth = view.portWidth();
-                cachePtr->portHeight = view.portHeight();
-            }
-
-			
-			MString name = view.rendererString();
-			if (name != "hwRender_OpenGL_Renderer" && name != "base_OpenGL_Renderer")
-			{
-				return;
-			}
-			
-			view.beginGL();
-
-			glPushAttrib(GL_ALL_ATTRIB_BITS);
-            glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS);
-			glPushMatrix();
-
-			// Exception safety: Use try-catch to ensure GL state is always restored
-			// This prevents VP2 viewport from getting stuck if drawing code throws
-			try
-			{
-				glDisable(GL_LIGHTING);
-				glDisable(GL_DEPTH_TEST);
-
-				for (int i = 0; i < mpManager->bufferPathArray.size(); ++i)
-					mpManager->bufferPathArray[i].draw(view, cachePtr);
-
-				for(int i = 0; i < mpManager->pathArray.size(); ++i)
-					mpManager->pathArray[i].draw(view, cachePtr);
-			}
-			catch (...)
-			{
-				// Catch any exceptions to ensure GL state cleanup
-				// Re-throw after cleanup is optional - we silently recover
-			}
-
-			// Always restore GL state, even if exception occurred
-			glPopMatrix();
-			glPopAttrib();
-            glPopClientAttrib();
-			view.endGL();
-			
-		}
-	}
+    // VP2-only mode: All rendering handled by MotionPathOverride::addUIDrawables
+    // Legacy OpenGL rendering removed - VP2 provides better performance and consistency
+    // This callback is kept empty for backward compatibility but does no rendering
 }
 
 void MotionPathManager::viewDestroyCallback(const MString& panelName, void* data)
@@ -440,13 +370,13 @@ void MotionPathManager::cleanupViewports()
 void MotionPathManager::createMotionPathWorldCallback()
 {
     for(int i = 0; i < pathArray.size(); i++)
-        pathArray[i].addWorldMatrixCallback();
+        pathArray[i]->addWorldMatrixCallback();
 }
 
 void MotionPathManager::destroyMotionPathWorldCallback()
 {
     for(int i = 0; i < pathArray.size(); i++)
-        pathArray[i].removeWorldMartrixCallback();
+        pathArray[i]->removeWorldMartrixCallback();
 }
 
 void MotionPathManager::addCallbacks()
@@ -519,7 +449,7 @@ bool MotionPathManager::hasSelectionListChanged(const MObjectArray &objArray)
     if (objArray.length() != selectionObjects.length())
         return true;
     
-    for(unsigned int i = 0; i < selectionObjects.length(); i++)
+    for (unsigned int i = 0; i < selectionObjects.length(); ++i)
 		if(selectionObjects[i] != objArray[i])
 			return true;
 
@@ -528,7 +458,7 @@ bool MotionPathManager::hasSelectionListChanged(const MObjectArray &objArray)
 
 bool MotionPathManager::isContainedInMObjectArray(const MObjectArray &objArray, const MObject &obj)
 {
-    for (int i = 0; i < objArray.length(); i++)
+    for (unsigned int i = 0; i < objArray.length(); ++i)
         if (obj == objArray[i])
             return true;
     return false;
@@ -536,12 +466,12 @@ bool MotionPathManager::isContainedInMObjectArray(const MObjectArray &objArray, 
 
 void MotionPathManager::highlightSelection(const MObjectArray &objArray)
 {
-    for (int i = 0; i < selectionObjects.length(); i++)
+    for (unsigned int i = 0; i < selectionObjects.length(); ++i)
     {
         if (isContainedInMObjectArray(objArray, selectionObjects[i]))
-            pathArray[i].setColorMultiplier(1.0);
+            pathArray[i]->setColorMultiplier(1.0);
         else
-            pathArray[i].setColorMultiplier(0.4);
+            pathArray[i]->setColorMultiplier(0.4);
     }
 }
 
@@ -577,7 +507,13 @@ void MotionPathManager::timeChangeEvent(MTime &currentTime,  void* data)
 {
     MotionPathManager* mpManager = (MotionPathManager*) data;
 	if(mpManager)
+    {
+        // F4: Locked 模式下清空父矩阵缓存，确保世界位置更新可及时反映
+        if (GlobalSettings::lockedMode || GlobalSettings::lockedModeInteractive)
+            mpManager->clearParentMatrixCaches();
+
 		mpManager->refreshDisplayTimeRange();
+    }
 
 
 }
@@ -623,13 +559,13 @@ void MotionPathManager::refreshDisplayTimeRange()
 		cacheDone = expandParentMatrixAndPivotCache(currentFrame);
 
 	for(int i = 0; i < pathArray.size(); i++)
-		pathArray[i].setDisplayTimeRange(startFrame, endFrame);
+		pathArray[i]->setDisplayTimeRange(startFrame, endFrame);
 }
 
 void MotionPathManager::clearParentMatrixCaches()
 {
     for(int i = 0; i < pathArray.size(); i++)
-		pathArray[i].clearParentMatrixCache();
+		pathArray[i]->clearParentMatrixCache();
 }
 
 bool MotionPathManager::expandParentMatrixAndPivotCache(const double currentTimeValue)
@@ -654,9 +590,9 @@ bool MotionPathManager::expandParentMatrixAndPivotCache(const double currentTime
             
 			for(int j = 0; j < pathArray.size(); j++)
 			{
-				if(!pathArray[j].isCacheDone())
+				if(!pathArray[j]->isCacheDone())
 				{
-					pathArray[j].growParentAndPivotMatrixCache(currentTimeValue, i);
+					pathArray[j]->growParentAndPivotMatrixCache(currentTimeValue, i);
 					cacheCompleted = false;
 				}
 			}
@@ -674,7 +610,7 @@ void MotionPathManager::setTimeRange(const double start, const double end)
 	GlobalSettings::endTime = end <= start ? start + 1.0: end;
     
 	for(int i = 0; i < pathArray.size(); i++)
-		pathArray[i].setTimeRange(GlobalSettings::startTime, GlobalSettings::endTime);
+		pathArray[i]->setTimeRange(GlobalSettings::startTime, GlobalSettings::endTime);
     
 	cacheDone = false;
 }
@@ -684,7 +620,7 @@ void MotionPathManager::drawCurvesForSelection(M3dView &view, CameraCache *cache
     for(int i = 0; i < pathArray.size(); i++)
 	{
 		view.pushName(i);
-		pathArray[i].drawCurvesForSelection(view, cachePtr);
+		pathArray[i]->drawCurvesForSelection(view, cachePtr);
 		view.popName();
 	}
 }
@@ -692,8 +628,8 @@ void MotionPathManager::drawCurvesForSelection(M3dView &view, CameraCache *cache
 MotionPath* MotionPathManager::getMotionPathPtr(const int id)
 {
 	if(id >= 0 && id < pathArray.size())
-		return &pathArray[id];
-    
+		return pathArray[id].get();
+
 	return NULL;
 }
 
@@ -708,41 +644,50 @@ int MotionPathManager::isMObjectContained(const MObject &obj, const MObjectArray
 
 void MotionPathManager::setSelectionList(const MObjectArray &list)
 {
-    //we keep track the old objects cause we don't want to destroy old MotionPaths if still in use
-    std::vector<MotionPath> oldPathArray = pathArray;
-    MObjectArray oldSelectionObjects (selectionObjects);
-    
-    pathArray.clear();
-    selectionObjects.clear();
-    
+    // A5: Incremental selection update - avoid full array copy
+    // Build new array by reusing existing MotionPath objects where possible
+
+    std::vector<std::unique_ptr<MotionPath>> newPathArray;
+    MObjectArray newSelectionObjects;
+
+    newPathArray.reserve(list.length());
+
     for (unsigned int i = 0; i < list.length(); ++i)
     {
         if (!list[i].isNull())
         {
             if (MotionPath::hasAnimationLayers(list[i]))
                 MGlobal::displayWarning("Motion Path does not support animation layers. The path won't be displayed in real time.");
-            
-            int index = isMObjectContained(list[i], oldSelectionObjects);
-            
-            if (index == -1)
+
+            // Check if this object is already in the current selection
+            int existingIndex = isMObjectContained(list[i], selectionObjects);
+
+            if (existingIndex != -1)
             {
-                MotionPath m =  MotionPath(list[i]);
-                pathArray.push_back(m);
+                // Reuse existing MotionPath object (move ownership)
+                newPathArray.push_back(std::move(pathArray[existingIndex]));
             }
             else
-                pathArray.push_back(oldPathArray[index]);
+            {
+                // Create new MotionPath object
+                newPathArray.push_back(std::make_unique<MotionPath>(list[i]));
+            }
 
-            selectionObjects.append(list[i]);
+            newSelectionObjects.append(list[i]);
         }
     }
-    
+
+    // Replace old arrays with new ones (old objects automatically cleaned up)
+    pathArray = std::move(newPathArray);
+    selectionObjects = newSelectionObjects;
+
     cacheDone = false;
 }
 
 MStringArray MotionPathManager::getSelectionList()
 {
 	MStringArray list;
-	for(int i = 0; i < selectionObjects.length(); i++)
+	for (unsigned int i = 0; i < selectionObjects.length(); ++i)
 	{
 		MFnDagNode dagNode(selectionObjects[i]);
 		list.append(dagNode.fullPathName());
@@ -754,7 +699,7 @@ MStringArray MotionPathManager::getSelectionList()
 void MotionPathManager::addBufferPaths()
 {
     for (unsigned int i = 0; i < pathArray.size(); ++i)
-        bufferPathArray.push_back(pathArray[i].createBufferPath());
+        bufferPathArray.push_back(pathArray[i]->createBufferPath());
 }
 
 void MotionPathManager::deleteAllBufferPaths()
@@ -814,8 +759,29 @@ void MotionPathManager::getCurrentKeySelection(std::vector<MDoubleArray> &sel)
 {
     sel.clear();
     sel.reserve(pathArray.size());
-    
+
     for (int i=0; i < pathArray.size(); ++i)
-        sel.push_back(pathArray[i].getSelectedKeys());
+        sel.push_back(pathArray[i]->getSelectedKeys());
+}
+
+// B1: Get or create picking grid for viewport
+PickingGrid* MotionPathManager::getPickingGrid(int viewportWidth, int viewportHeight)
+{
+    // Create grid if it doesn't exist or viewport size changed
+    if (!pickingGrid ||
+        pickingGrid->getViewportWidth() != viewportWidth ||
+        pickingGrid->getViewportHeight() != viewportHeight)
+    {
+        pickingGrid = std::make_unique<PickingGrid>(viewportWidth, viewportHeight);
+        pickingGridValid = false;
+    }
+
+    return pickingGrid.get();
+}
+
+// B1: Invalidate picking grid (call when scene changes)
+void MotionPathManager::invalidatePickingGrid()
+{
+    pickingGridValid = false;
 }
 

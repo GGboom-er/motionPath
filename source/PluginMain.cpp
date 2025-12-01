@@ -182,6 +182,7 @@ MStatus uninitializePlugin(MObject obj)
 	}
 
 	mpManager.cleanupViewports();
+	mpManager.clearParentMatrixCaches();
 	mpManager.removeCallbacks();
 
 	status = plugin.deregisterContextCommand("tcMotionPathEditContext");

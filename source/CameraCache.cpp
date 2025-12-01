@@ -98,10 +98,11 @@ void CameraCache::cacheCamera()
     {
         MTime evalTime(i, MTime::uiUnit());
         MDGContext context(evalTime);
-        
+
         MObject val;
         worldMatrixPlug.getValue(val, context);
-        matrixCache[i] = MFnMatrixData(val).matrix().inverse();
+        // A2: Use tick-based key for O(1) hash lookup instead of O(log N) tree lookup
+        matrixCache[timeToTick(i)] = MFnMatrixData(val).matrix().inverse();
     }
     
     //restoring the previous values if a keyframe was not actually set by the user
@@ -157,14 +158,16 @@ void CameraCache::checkRangeIsCached()
 
     for (double i = startFrame; i <= endFrame; ++i)
     {
-        if (matrixCache.find(i) == matrixCache.end())
+        int64_t tick = timeToTick(i);
+        if (matrixCache.find(tick) == matrixCache.end())
         {
             MTime evalTime(i, MTime::uiUnit());
             MDGContext context(evalTime);
-            
+
             MObject val;
             worldMatrixPlug.getValue(val, context);
-            matrixCache[i] = MFnMatrixData(val).matrix().inverse();
+            // A2: Use tick-based key for O(1) hash lookup
+            matrixCache[tick] = MFnMatrixData(val).matrix().inverse();
         }
     }
     caching = false;
@@ -172,19 +175,21 @@ void CameraCache::checkRangeIsCached()
 
 void CameraCache::ensureMatricesAtTime(const double time, const bool force)
 {
-    if (matrixCache.find(time) == matrixCache.end() || force)
-    {        
+    int64_t tick = timeToTick(time);
+    if (matrixCache.find(tick) == matrixCache.end() || force)
+    {
         if (worldMatrixPlug.isNull())
             return;
-        
+
         std::string name = worldMatrixPlug.name().asChar();
-        
+
         MTime evalTime(time, MTime::uiUnit());
-        
+
         MDGContext context(evalTime);
-        
+
         MObject val;
         worldMatrixPlug.getValue(val, context);
-        matrixCache[time] = MFnMatrixData(val).matrix().inverse();
+        // A2: Use tick-based key for O(1) hash lookup instead of O(log N) tree lookup
+        matrixCache[tick] = MFnMatrixData(val).matrix().inverse();
     }
 }

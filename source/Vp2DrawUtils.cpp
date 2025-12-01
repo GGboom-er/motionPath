@@ -60,7 +60,7 @@ void VP2DrawUtils::drawPoint(const MVector &point, float size, const MMatrix &ca
 
 	double x, y; 
 	frameContext->worldToViewport(point, x, y);
-	drawManager->circle2d(MPoint(x, y), size / 2, true);
+	drawManager->circle2d(MPoint(x, y), static_cast<float>(size * 0.5f), true);
 }
 
 
@@ -91,17 +91,26 @@ void VP2DrawUtils::drawKeyFrames(std::vector<Keyframe *> keys, const float size,
 
 		double blackBackgroundFactor = 1.2;
 		MColor color(0.0, 0.0, 0.0);
-		double centerX, centerY;
-		frameContext->worldToViewport(key->worldPosition, centerX, centerY);
+
+		// VP2 Performance: Use pre-computed screen coordinates if available
+		// projPosition is cached in MotionPath::drawKeyFrames to avoid repeated worldToViewport calls
+		double centerX = key->projPosition.x;
+		double centerY = key->projPosition.y;
+
+		// Fallback: Compute on-the-fly if cache not initialized (shouldn't happen in normal flow)
+		if (centerX == 0.0 && centerY == 0.0 && key->worldPosition.length() > 0.001)
+		{
+			frameContext->worldToViewport(key->worldPosition, centerX, centerY);
+		}
 
 		drawManager->setColor(color);
-		drawManager->circle2d(MPoint(centerX, centerY), size * blackBackgroundFactor / 2, true);
+			drawManager->circle2d(MPoint(centerX, centerY), static_cast<float>(size * blackBackgroundFactor * 0.5), true);
 
 		if (key->selectedFromTool)
 		{
 			MColor color(1.0, 1.0, 1.0);
 			drawManager->setColor(color);
-			drawManager->circle2d(MPoint(centerX, centerY), size / 2, true);
+			drawManager->circle2d(MPoint(centerX, centerY), static_cast<float>(size * 0.5f), true);
 		}
 		else
 		{
@@ -121,10 +130,10 @@ void VP2DrawUtils::drawKeyFrames(std::vector<Keyframe *> keys, const float size,
 			for (int i = 0; i < axisCount; ++i)
 			{
 				Keyframe::getColorForAxis(combinedAxis[i], color);
-				color *= colorMultiplier;
+				color *= static_cast<float>(colorMultiplier);
 
 				drawManager->setColor(color);
-				drawManager->circle2d(MPoint(centerX, centerY), stepSize * (axisCount - i), true);
+				drawManager->circle2d(MPoint(centerX, centerY), static_cast<float>(stepSize * (axisCount - i)), true);
 			}
 
 			/*
@@ -171,22 +180,22 @@ void VP2DrawUtils::drawKeyFrames(std::vector<Keyframe *> keys, const float size,
 
 		if (rAxis.size() > 0)
 		{
-			double lineWidth = size / 5;
-			if (lineWidth < 1) lineWidth = 1;
+			float lineWidth = size / 5.0f;
+			if (lineWidth < 1.0f) lineWidth = 1.0f;
 
-			double unit = size * blackBackgroundFactor / 2;
-			float x1s[3] = { -unit * 0.8, unit * 1.5,  unit * -1.5 };
-			float y1s[3] = { unit * 1.2,  unit * 0.1,  unit * 0.1 };
+			float unit = static_cast<float>(size * blackBackgroundFactor * 0.5);
+			float x1s[3] = { -unit * 0.8f, unit * 1.5f,  unit * -1.5f };
+			float y1s[3] = { unit * 1.2f,  unit * 0.1f,  unit * 0.1f };
 
-			float x2s[3] = { unit * 0.8,  unit * 0.7,  unit * -0.7 };
-			float y2s[3] = { unit * 1.2,  unit * -1.2, unit * -1.2 };
+			float x2s[3] = { unit * 0.8f,  unit * 0.7f,  unit * -0.7f };
+			float y2s[3] = { unit * 1.2f,  unit * -1.2f, unit * -1.2f };
 
 			MColor color;
 			MVector p1(0, 0, 0), p2(0, 0, 0);
 			for (unsigned int i = 0; i < rAxis.size(); ++i)
 			{
 				Keyframe::getColorForAxis(rAxis[i], color);
-				color *= colorMultiplier;
+				color *= static_cast<float>(colorMultiplier);
 
 				p1.x = centerX + x1s[i];
 				p1.y = centerY + y1s[i];
@@ -252,3 +261,33 @@ void VP2DrawUtils::drawFrameLabel(double frame, const MVector &framePos, M3dView
 	drawManager->text(MPoint(viewX, viewY + (GlobalSettings::frameSize * sizeOffset)), frameStr, MHWRender::MUIDrawManager::kCenter);
 }
 
+// A3: Cached screen-space drawing functions
+void VP2DrawUtils::drawLine2dCached(const MPoint &screenPos1, const MPoint &screenPos2, float lineWidth, const MColor &color, MHWRender::MUIDrawManager* drawManager)
+{
+	drawManager->setColor(color);
+	drawManager->setLineWidth(lineWidth);
+	drawManager->line2d(screenPos1, screenPos2);
+}
+
+void VP2DrawUtils::drawPoint2dCached(const MPoint &screenPos, float size, const MColor &color, MHWRender::MUIDrawManager* drawManager)
+{
+	drawManager->setColor(color);
+	drawManager->circle2d(screenPos, static_cast<float>(size * 0.5f), true);
+}
+
+
+// B4: Cached label drawing optimization
+void VP2DrawUtils::drawFrameLabelCached(double frame, const MPoint &screenPos, const double sizeOffset, const MColor &color, MHWRender::MUIDrawManager* drawManager)
+{
+	unsigned int fontPixelSize = static_cast<unsigned int>(14.0 * sizeOffset);
+	if (fontPixelSize < 6) fontPixelSize = 6;
+	if (fontPixelSize > 64) fontPixelSize = 64;
+
+	drawManager->setFontSize(fontPixelSize);
+	drawManager->setColor(color);
+
+	MString frameStr;
+	frameStr = frame;
+
+	drawManager->text(MPoint(screenPos.x, screenPos.y + (GlobalSettings::frameSize * sizeOffset)), frameStr, MHWRender::MUIDrawManager::kCenter);
+}
