@@ -10,7 +10,11 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 find_package(Maya REQUIRED)
 
-# Qt
+# Qt - use Maya's bundled Qt
+set(MAYA_LOCATION "C:/Program Files/Autodesk/Maya${MAYA_VERSION}")
+set(Qt6_DIR "${MAYA_LOCATION}/Qt/Qt/lib/cmake/Qt6")
+set(CMAKE_PREFIX_PATH "${MAYA_LOCATION}/Qt/Qt" ${CMAKE_PREFIX_PATH})
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)

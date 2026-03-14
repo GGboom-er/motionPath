@@ -25,7 +25,8 @@ bool GlobalSettings::showFrameNumbers = false;
 bool GlobalSettings::showRotationKeyFrames = true;
 bool GlobalSettings::showPath = true;
 double GlobalSettings::drawTimeInterval = 0.1;
-int GlobalSettings::drawFrameInterval = 1;  // Default 1 frame interval
+int GlobalSettings::drawFrameInterval = 1;   // 添加关键帧时的间隔
+int GlobalSettings::frameLabelInterval = 10; // 显示帧号标签的间隔，默认10帧
 MMatrix GlobalSettings::cameraMatrix;
 int GlobalSettings::portWidth = 0;
 int GlobalSettings::portHeight = 0;

@@ -123,7 +123,11 @@ int contextUtils::processCurveHits(const short mx, const short my, const MMatrix
 
 void contextUtils::processKeyFrameHits(const short mx, const short my, MotionPath* motionPathPtr, M3dView &view, const MMatrix &cameraMatrix, CameraCache *cachePtr, MIntArray &selectedKeys)
 {
+    if (!motionPathPtr)
+        return;
     KeyframeMap *km = motionPathPtr->keyFramesCachePtr();
+    if (!km)
+        return;
     int key = -1;
     double bestDistance = std::numeric_limits<double>::max();
 
@@ -201,12 +205,16 @@ void contextUtils::processKeyFrameHits(const short mx, const short my, MotionPat
 
 void contextUtils::processTangentHits(const short mx, const short my, MotionPath* motionPathPtr, M3dView &view, const MMatrix &cameraMatrix, CameraCache *cachePtr, int &selectedKeyId, int &selectedTangent)
 {
+	selectedTangent = -1;
+	if (!motionPathPtr)
+		return;
 	KeyframeMap *km = motionPathPtr->keyFramesCachePtr();
+	if (!km)
+		return;
 
 	double tfs = GlobalSettings::frameSize / 2;
 	tfs = tfs * tfs;
 
-	selectedTangent = -1;
     double bestDistance = std::numeric_limits<double>::max();
 
     const bool useBuckets = motionPathPtr->hasTangentBuckets();
@@ -306,6 +314,9 @@ void contextUtils::processTangentHits(const short mx, const short my, MotionPath
 
 bool contextUtils::processFramesHits(const short mx, const short my, MotionPath* motionPathPtr, M3dView &view, const MMatrix &cameraMatrix, CameraCache *cachePtr, double &time)
 {
+	if (!motionPathPtr)
+		return false;
+
 	double fs = GlobalSettings::frameSize / 2;
 	fs = fs * fs;
     double bestDistance = std::numeric_limits<double>::max();

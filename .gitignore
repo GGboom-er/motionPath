@@ -1,11 +1,62 @@
+# Compiled / Object files
 *.sdf
 *.opensdf
 *.pyc
-.project
-.cproject
-x64/
 *.o
-Debug/
-build/
+*.obj
 *.exe
 *.msi
+*.dll
+*.mll
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# IDE / Editor
+.project
+.cproject
+.idea/
+.qt/
+.vs/
+.vscode/
+*.suo
+*.user
+
+# Claude AI
+.claude/
+
+# CMake build artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+cmake/
+
+# Visual Studio generated
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+motionPath.dir/
+motionPath_autogen/
+
+# Build output
+x64/
+Debug/
+Release/
+build/
+
+# Build logs
+*.log
+build_log.txt
+
+# AI-generated reports
+BUG_ANALYSIS_AND_FIXES.md
+BUG_REPORT.md
+CODE_REVIEW.md
+LOGIC_REVIEW_REPORT.md
+MOTIONPATH_MAINTENANCE.md
+MOTIONPATH_OPTIMIZATION_REPORT.md
+
+# Misc
+nul

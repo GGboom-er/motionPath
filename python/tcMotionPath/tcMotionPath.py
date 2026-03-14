@@ -87,6 +87,7 @@ class StaticLabels:
     SHOW_KEYFRAMES = "ToolChefs_MP_showKeyFrames"
     TIME_DELTA = "ToolChefs_MP_drawTimeDelta"
     FRAME_DELTA = "ToolChefs_MP_frameInterval"
+    FRAME_LABEL_INTERVAL = "ToolChefs_MP_frameLabelInterval"  # 帧号标签显示间隔
     DRAW_KEYFRAME_COUNT = "ToolChefs_MP_drawKeyframeCount"
     SHOW_ROTATION = "ToolChefs_MP_showRotationKeyFrames"
     FNUMBER_COLOR = "ToolChefs_MP_frameNumberColor"
@@ -120,6 +121,7 @@ _default_values = {
     StaticLabels.SHOW_ROTATION  : True,
     StaticLabels.TIME_DELTA     : 1,
     StaticLabels.FRAME_DELTA    : 1,
+    StaticLabels.FRAME_LABEL_INTERVAL : 10,  # 帧号标签默认每10帧显示
     StaticLabels.DRAW_KEYFRAME_COUNT : 5,
     StaticLabels.SHOW_KNUMBER   : False,
     StaticLabels.SHOW_FNUMBER   : False,
@@ -304,17 +306,28 @@ def _disable():
     """Disable motion path tool and clean up viewport overrides"""
     _delete_script_jobs()
 
+    # FIX: 安全地删除工具上下文，即使插件已卸载
     for t in TOOLS.all():
-        if cmds.currentCtx() == t:
-            cmds.setToolTo('selectSuperContext')
-        if cmds.contextInfo(t, exists=True):
-            cmds.deleteUI(t)
+        try:
+            if cmds.currentCtx() == t:
+                cmds.setToolTo('selectSuperContext')
+            if cmds.contextInfo(t, exists=True):
+                cmds.deleteUI(t)
+        except Exception as e:
+            # 插件可能已卸载，忽略错误
+            pass
 
     # Clean up any remaining viewport overrides
-    _cleanup_viewport_overrides()
+    try:
+        _cleanup_viewport_overrides()
+    except Exception as e:
+        pass
 
     if tc_motion_path_widget:
-        tc_motion_path_widget.set_active_tool('selectSuperContext')
+        try:
+            tc_motion_path_widget.set_active_tool('selectSuperContext')
+        except Exception as e:
+            pass
 
 
 def _init_tool():
@@ -899,6 +912,21 @@ class EditPathWidget(QtWidgets.QWidget):
         after_layout.addWidget(self._frames_after)
         layout.addWidget(after_widget)
 
+        # Frame label interval (controls how often frame numbers are displayed)
+        frame_label_widget = QtWidgets.QWidget()
+        frame_label_layout = _build_layout(False)
+        frame_label_widget.setLayout(frame_label_layout)
+        frame_label_layout.addWidget(QtWidgets.QLabel("Frame Label Interval:"))
+        self._frame_label_interval = QtWidgets.QSpinBox()
+        self._frame_label_interval.setRange(1, 100)
+        self._frame_label_interval.setValue(_get_default_value(StaticLabels.FRAME_LABEL_INTERVAL))
+        self._frame_label_interval.setToolTip(
+            "Interval for displaying frame number labels.\n"
+            "Example: Value=10 means show frame number every 10 frames"
+        )
+        frame_label_layout.addWidget(self._frame_label_interval)
+        layout.addWidget(frame_label_widget)
+
         # Time delta
         time_widget = QtWidgets.QWidget()
         time_layout = _build_layout(False)
@@ -981,6 +1009,7 @@ class EditPathWidget(QtWidgets.QWidget):
             _safe_tcMotionPathCmd(framesBefore=_get_default_value(StaticLabels.FRAMES_BEFORE))
             _safe_tcMotionPathCmd(framesAfter=_get_default_value(StaticLabels.FRAMES_AFTER))
             _safe_tcMotionPathCmd(frameInterval=_get_default_value(StaticLabels.FRAME_DELTA))
+            _safe_tcMotionPathCmd(frameLabelInterval=_get_default_value(StaticLabels.FRAME_LABEL_INTERVAL))
             _safe_tcMotionPathCmd(drawKeyframeCount=_get_default_value(StaticLabels.DRAW_KEYFRAME_COUNT))
             _safe_tcMotionPathCmd(drawTimeInterval=_get_default_value(StaticLabels.TIME_DELTA))
 
@@ -996,6 +1025,7 @@ class EditPathWidget(QtWidgets.QWidget):
         self._frames_before.valueChanged.connect(self._frames_before_changed)
         self._frames_after.valueChanged.connect(self._frames_after_changed)
         self._frame_delta.valueChanged.connect(self._frame_delta_changed)
+        self._frame_label_interval.valueChanged.connect(self._frame_label_interval_changed)
         self._draw_keyframe_count.valueChanged.connect(self._draw_keyframe_count_changed)
         self._time_delta.valueChanged.connect(self._time_delta_changed)
         self._draw_mode.currentIndexChanged.connect(self._draw_mode_changed)
@@ -1120,13 +1150,24 @@ class EditPathWidget(QtWidgets.QWidget):
 
     @Slot(int)
     def _frame_delta_changed( self, value ):
-        """Handle frame delta value change - updates in real-time"""
+        """Handle frame delta value change - for click mode keyframe interval"""
         try:
             _safe_tcMotionPathCmd(frameInterval=value)
             _set_default_value(StaticLabels.FRAME_DELTA, value)
-            _request_refresh()
+            # 不需要刷新，此参数仅用于点击添加关键帧时的间隔
         except Exception as e:
             print(f"Error updating frame interval: {e}")
+            traceback.print_exc()
+
+    @Slot(int)
+    def _frame_label_interval_changed( self, value ):
+        """Handle frame label interval value change - updates display in real-time"""
+        try:
+            _safe_tcMotionPathCmd(frameLabelInterval=value)
+            _set_default_value(StaticLabels.FRAME_LABEL_INTERVAL, value)
+            _request_refresh()
+        except Exception as e:
+            print(f"Error updating frame label interval: {e}")
             traceback.print_exc()
 
     @Slot(int)
@@ -1765,17 +1806,24 @@ class MotionPathWidget(MayaQWidgetDockableMixin, QtWidgets.QWidget):
         """Handle close event"""
         global _viewport_original_settings
 
-        # Disable motion path functionality
-        try:
-            _enable_motion_path(False)
-        except RuntimeError as e:
-            # Widget already deleted - this is expected during Maya shutdown
-            pass
-        except Exception as e:
-            cmds.warning(f"Error disabling motion path on close: {e}")
+        # FIX: 首先检查插件是否仍然加载
+        plugin_loaded = _is_plugin_loaded()
 
-        # Clean up viewport overrides
-        _cleanup_viewport_overrides()
+        # Disable motion path functionality (only if plugin is loaded)
+        if plugin_loaded:
+            try:
+                _enable_motion_path(False)
+            except RuntimeError as e:
+                # Widget already deleted - this is expected during Maya shutdown
+                pass
+            except Exception as e:
+                print(f"[MotionPath] Error disabling motion path on close: {e}")
+
+        # Clean up viewport overrides (always try, even if plugin unloaded)
+        try:
+            _cleanup_viewport_overrides()
+        except Exception as e:
+            print(f"[MotionPath] Error cleaning up viewport overrides: {e}")
 
         # Clear global reference to prevent stale instances
         global tc_motion_path_widget

@@ -506,16 +506,21 @@ void MotionPathManager::deleteAllCallback(void *data)
 void MotionPathManager::timeChangeEvent(MTime &currentTime,  void* data)
 {
     MotionPathManager* mpManager = (MotionPathManager*) data;
-	if(mpManager)
+    if(mpManager)
     {
-        // F4: Locked 模式下清空父矩阵缓存，确保世界位置更新可及时反映
-        if (GlobalSettings::lockedMode || GlobalSettings::lockedModeInteractive)
-            mpManager->clearParentMatrixCaches();
+        // FIX #2 性能优化: 在locked mode下不再每次时间变化都清空缓存
+        // 原因: 父矩阵缓存应该由 worldMatrixChangedCallback 来失效
+        // 而不是每帧都重建，这样可以保留已计算的帧数据
+        //
+        // 如果父对象移动了，worldMatrixChangedCallback 会设置 worldSpaceCallbackCalled=true
+        // 然后在 MotionPath::draw() 中会智能地只更新需要的帧
+        //
+        // 移除以下代码以提升性能:
+        // if (GlobalSettings::lockedMode || GlobalSettings::lockedModeInteractive)
+        //     mpManager->clearParentMatrixCaches();
 
-		mpManager->refreshDisplayTimeRange();
+        mpManager->refreshDisplayTimeRange();
     }
-
-
 }
 
 void MotionPathManager::commandEvent(const MString &message, MCommandMessage::MessageType messageType, void *data)
@@ -783,5 +788,20 @@ PickingGrid* MotionPathManager::getPickingGrid(int viewportWidth, int viewportHe
 void MotionPathManager::invalidatePickingGrid()
 {
     pickingGridValid = false;
+}
+
+// FIX #4: Invalidate all motion path caches when draw mode changes
+// This ensures the motion path updates properly when switching between
+// camera space and world space modes
+void MotionPathManager::invalidateAllMotionPathCaches()
+{
+    for (size_t i = 0; i < pathArray.size(); ++i)
+    {
+        if (pathArray[i])
+        {
+            pathArray[i]->forceInvalidateScreenSpaceCache();
+        }
+    }
+    invalidatePickingGrid();
 }
 

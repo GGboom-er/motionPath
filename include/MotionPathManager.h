@@ -104,6 +104,9 @@ public:
     PickingGrid* getPickingGrid(int viewportWidth, int viewportHeight);
     void invalidatePickingGrid();
 
+    // FIX #4: Invalidate all motion path caches (for draw mode changes)
+    void invalidateAllMotionPathCaches();
+
     void refreshCameraCallbackForPanel(const MString &panelName, MDagPath &camera);
     void createCameraCacheForCamera(const MDagPath &camera);
     

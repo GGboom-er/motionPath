@@ -126,6 +126,7 @@ bool ContextMenuWidget::eventFilter(QObject *o, QEvent *event)
             invertKeySelectionAction->setData(QVariant("invertKeySelectionAction"));
             
             MotionPath *motionPathPtr = mpManager.getMotionPathPtr(selectedCurveId);
+            if (!motionPathPtr) return false;
             bool keySelection = motionPathPtr->getSelectedKeys().length() > 0;
             bool hasCopiedKeys = KeyClipboard::getClipboard().getSize() > 0;
             

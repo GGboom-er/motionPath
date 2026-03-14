@@ -361,6 +361,7 @@ MSyntax MotionPathCmd::syntaxCreator()
     // Drawing intervals
     syntax.addFlag("-dti", "-drawTimeInterval", MSyntax::kDouble);
     syntax.addFlag("-fi", "-frameInterval", MSyntax::kLong);
+    syntax.addFlag("-fli", "-frameLabelInterval", MSyntax::kLong);  // 帧号标签显示间隔
     syntax.addFlag("-sm", "-strokeMode", MSyntax::kLong);
     syntax.addFlag("-dkc", "-drawKeyframeCount", MSyntax::kLong);
 
@@ -537,7 +538,7 @@ MStatus MotionPathCmd::doIt(const MArgList& args)
     {
         int drawMode;
         argData.getFlagArgument("-drawMode", 0, drawMode);
-        
+
         if (GlobalSettings::motionPathDrawMode != drawMode)
         {
             /*
@@ -546,7 +547,7 @@ MStatus MotionPathCmd::doIt(const MArgList& args)
             else
                 mpManager.createCameraCachesAndCameraCallbacks();
             */
-            
+
             if (drawMode < 0)
                 drawMode = 0;
 
@@ -555,6 +556,11 @@ MStatus MotionPathCmd::doIt(const MArgList& args)
 
             mpManager.cacheCameras();
             GlobalSettings::motionPathDrawMode = (GlobalSettings::DrawMode) drawMode;
+
+            // FIX #4: Invalidate all motion path caches when switching draw modes
+            // This ensures the motion path curve (not just keyframes) updates properly
+            // when switching between camera space and world space
+            mpManager.invalidateAllMotionPathCaches();
 
             // Trigger viewport refresh when draw mode changes
             MGlobal::executeCommandOnIdle("refresh");
@@ -565,9 +571,14 @@ MStatus MotionPathCmd::doIt(const MArgList& args)
         int frameInterval;
         argData.getFlagArgument("-frameInterval", 0, frameInterval);
         GlobalSettings::drawFrameInterval = frameInterval;
-
-        // Refresh display to apply new frame label interval
-        // The drawFrameLabels() loop uses this value to control label display frequency
+        // 不再刷新显示，此参数仅用于添加关键帧时的间隔
+    }
+    else if (argData.isFlagSet("-frameLabelInterval"))
+    {
+        int labelInterval;
+        argData.getFlagArgument("-frameLabelInterval", 0, labelInterval);
+        GlobalSettings::frameLabelInterval = labelInterval;
+        // 刷新显示以应用新的帧号标签间隔
         mpManager.refreshDisplayTimeRange();
     }
     else if (argData.isFlagSet("-drawKeyframeCount"))

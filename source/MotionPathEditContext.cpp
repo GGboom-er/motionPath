@@ -157,7 +157,10 @@ void MotionPathEditContext::modifySelection(const MDoubleArray &selectedTimes, c
                 return;
             
             for (int j=0; j < mpManager.getMotionPathsCount(); ++j)
-                mpManager.getMotionPathPtr(j)->deselectAllKeys();
+            {
+                MotionPath* mp = mpManager.getMotionPathPtr(j);
+                if (mp) mp->deselectAllKeys();
+            }
             selectedMotionPathPtr->selectKeyAtTime(selectedTimes[i]);
         }
     }
@@ -361,30 +364,44 @@ void MotionPathEditContext::doDragCommon(MEvent &event, const bool old)
                     }
                     motionPath->offsetWorldPosition(finalOffset, selectedTimes[j], mpManager.getAnimCurveChangePtr());
                 }
-                // F1/F3: 编辑关键帧后立即失效屏幕缓存并刷新显示范围，保证路径/关键帧跟手
-                motionPath->forceInvalidateScreenSpaceCache();
+                // FIX: 精确范围失效 - 只清除编辑关键帧影响的曲线段
+                motionPath->invalidateAffectedRanges(selectedTimes);
+                motionPath->invalidateScreenCacheOnly();
             }
         }
-        
+
         lastWorldPosition = newPosition;
         mpManager.refreshDisplayTimeRange();
     }
     else if (currentMode == kTangentEditMode)
     {
         MVector newPosition = contextUtils::getWorldPositionFromProjPoint(tangentWorldPosition, initialX, initialY, thisX, thisY, activeView, cameraPosition);
-        
+
         MMatrix toWorldMatrix;
         // F3: 统一使用世界坐标系更新切线，避免父/相机矩阵不一致导致视口/轨迹偏移
         toWorldMatrix.setToIdentity();
-        
+
         selectedMotionPathPtr->setTangentWorldPosition(newPosition, lastSelectedTime, (Keyframe::Tangent)selectedTangentId, toWorldMatrix, mpManager.getAnimCurveChangePtr());
-        selectedMotionPathPtr->forceInvalidateScreenSpaceCache();
+        // FIX: 精确范围失效 - tangent编辑只影响相邻曲线段
+        double outStart, outEnd;
+        selectedMotionPathPtr->invalidateAffectedRange(lastSelectedTime, outStart, outEnd);
+        selectedMotionPathPtr->invalidateScreenCacheOnly();
         mpManager.refreshDisplayTimeRange();
     }
 
-    // VP2 Performance: Removed refresh() - VP2 handles automatic viewport updates during drag
-    // Manual refresh() in drag loop causes 50-200ms blocking per frame → stuttering
-    // VP2 will automatically refresh at appropriate times
+    // FIX #2: 请求VP2重新绘制以实时显示拖动更新
+    // 使用 MRenderer::setGeometryDrawDirty 代替 refresh() 避免阻塞
+    // 这是VP2推荐的轻量级刷新方式
+    if (currentMode == kFrameEditMode || currentMode == kTangentEditMode)
+    {
+        MHWRender::MRenderer* renderer = MHWRender::MRenderer::theRenderer();
+        if (renderer)
+        {
+            renderer->setGeometryDrawDirty(selectedMotionPathPtr->object());
+        }
+        // 同时请求视口刷新 - 使用非阻塞方式
+        activeView.refresh(false, true);
+    }
 }
 
 

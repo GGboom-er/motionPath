@@ -44,7 +44,8 @@ class GlobalSettings
         static bool showRotationKeyFrames;
         static bool showPath;
         static double drawTimeInterval;
-        static int drawFrameInterval;
+        static int drawFrameInterval;      // 添加关键帧时的间隔
+        static int frameLabelInterval;     // 显示帧号标签的间隔
 		static MMatrix cameraMatrix;
         static int portWidth;
         static int portHeight;

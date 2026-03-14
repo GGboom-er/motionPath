@@ -132,16 +132,30 @@ void MotionPath::cacheParentMatrixRange(double startFrame, double endFrame)
         return;  // ✅ 缓存命中，节省 200×5ms = 1000ms
     }
 
+    // FIX #2: 在拖动交互时使用自适应间隔，减少计算量
+    bool isInteracting = (QApplication::mouseButtons() != Qt::NoButton);
+    double frameStep = 1.0;
+    if (isInteracting)
+    {
+        int numFrames = static_cast<int>(endFrame - startFrame);
+        if (numFrames > 200)
+            frameStep = 5.0;
+        else if (numFrames > 100)
+            frameStep = 3.0;
+        else if (numFrames > 50)
+            frameStep = 2.0;
+    }
+
     // 优化A: 增量更新 - 仅计算缺失帧
     // 如果缓存部分有效，只更新新增的帧
     if (pMatrixCacheValid && pMatrixCache.size() > 0)
     {
         // 仅更新新增的前部帧
-        for (double i = startFrame; i < cachedRangeStart && i <= endFrame; ++i)
+        for (double i = startFrame; i < cachedRangeStart && i <= endFrame; i += frameStep)
             ensureParentAndPivotMatrixAtTime(i);
 
         // 仅更新新增的后部帧
-        for (double i = cachedRangeEnd + 1; i <= endFrame; ++i)
+        for (double i = cachedRangeEnd + 1; i <= endFrame; i += frameStep)
             ensureParentAndPivotMatrixAtTime(i);
 
         // 扩展缓存范围
@@ -151,15 +165,22 @@ void MotionPath::cacheParentMatrixRange(double startFrame, double endFrame)
     else
     {
         // 完全重建（首次或缓存失效后）
+        // FIX #2: 在交互时也应用自适应间隔
+        int totalFrames = static_cast<int>((endFrame - startFrame) / frameStep + 1);
+
 #ifdef _OPENMP
         // ✅ 线程安全的多线程优化：使用"收集-计算-写回"模式
         // 避免在工作线程中访问 Maya API（会崩溃）
-        int numFrames = static_cast<int>(endFrame - startFrame + 1);
 
         // 只有大量帧时才使用多线程（开销换收益）
-        if (numFrames > 50)
+        if (totalFrames > 50)
         {
-            std::vector<double> frames(numFrames);
+            std::vector<double> frames;
+            frames.reserve(totalFrames);
+            for (double f = startFrame; f <= endFrame; f += frameStep)
+                frames.push_back(f);
+
+            int numFrames = static_cast<int>(frames.size());
             std::vector<MMatrix> parentMatrices(numFrames);
             std::vector<MVector> rpivots(numFrames);
             std::vector<MVector> rptivots(numFrames);
@@ -167,7 +188,6 @@ void MotionPath::cacheParentMatrixRange(double startFrame, double endFrame)
             // ====== 阶段1: 主线程收集原始数据（Maya API 访问）======
             for (int idx = 0; idx < numFrames; ++idx)
             {
-                frames[idx] = startFrame + idx;
                 MTime evalTime(frames[idx], MTime::uiUnit());
 
                 // ✅ 主线程安全访问 Maya API
@@ -216,13 +236,13 @@ void MotionPath::cacheParentMatrixRange(double startFrame, double endFrame)
         }
         else
         {
-            // 帧数较少时使用单线程
-            for (double i = startFrame; i <= endFrame; ++i)
+            // 帧数较少时使用单线程（带自适应间隔）
+            for (double i = startFrame; i <= endFrame; i += frameStep)
                 ensureParentAndPivotMatrixAtTime(i);
         }
 #else
-        // 单线程版本（后备）
-        for (double i = startFrame; i <= endFrame; ++i)
+        // 单线程版本（后备，带自适应间隔）
+        for (double i = startFrame; i <= endFrame; i += frameStep)
             ensureParentAndPivotMatrixAtTime(i);
 #endif
 
@@ -331,27 +351,36 @@ void MotionPath::worldMatrixChangedCallback(MObject& transformNode, MDagMessage:
     if (GlobalSettings::lockedMode && GlobalSettings::lockedModeInteractive)
     {
         bool autokey = MAnimControl::autoKeyMode();
-        
+
         //check if the camera has the needed data
         if (MAnimControl::isPlaying() && autokey)
             return;
-        
+
         #if MAYA_API_VERSION > 201500
         //check if the camera has the needed data
         if (MAnimControl::isScrubbing() && autokey)
             return;
         #endif
-        
+
         MotionPath *mPath  = (MotionPath *) data;
-        //if this object is the only one selected we don't refresh the parent matrices
+
+        // FIX: 当选中物体自身被移动时，也需要更新运动轨迹
+        // 区分两种情况：
+        // 1. 选中物体自身被移动 - 只需失效位置缓存，父矩阵不变
+        // 2. 父物体被移动 - 需要重建父矩阵缓存
         if (MGlobal::isSelected(mPath->object()))
         {
             MSelectionList selList;
             MGlobal::getActiveSelectionList(selList);
             if (selList.length() == 1)
+            {
+                // 选中物体自身被移动，失效位置和屏幕缓存，但不需要重建父矩阵
+                // 使用public方法forceInvalidateScreenSpaceCache，它会同时清除drawPositionCache
+                mPath->forceInvalidateScreenSpaceCache();
                 return;
+            }
         }
-        
+
         mPath->setWorldSpaceCallbackCalled(true, transformNode);
     }
 }
@@ -717,12 +746,23 @@ void MotionPath::drawFrames(CameraCache* cachePtr, const MMatrix &currentCameraM
 	// All matrices already cached - loop now only performs drawing
 
     // A3: Use cached screen-space positions if available (VP2 optimization)
-    bool useScreenCache = (frameContext && !frameScreenSpacePositions.empty());
+    // FIX: 验证缓存完整性 - 仅在screenSpaceCacheValid且缓存非空时使用
+    bool useScreenCache = (frameContext && screenSpaceCacheValid && !frameScreenSpacePositions.empty());
 
     MPoint previousScreenPos;
     if (useScreenCache)
     {
-        previousScreenPos = frameScreenSpacePositions[timeToTick(displayStartTime)];
+        // FIX: 使用find()而非operator[]，避免自动插入默认值导致路径延伸到(0,0)
+        auto it = frameScreenSpacePositions.find(timeToTick(displayStartTime));
+        if (it != frameScreenSpacePositions.end())
+        {
+            previousScreenPos = it->second;
+        }
+        else
+        {
+            // 缓存未命中，禁用屏幕缓存模式
+            useScreenCache = false;
+        }
     }
 
 	for(double i = displayStartTime + adaptiveInterval; i <= displayEndTime; i += adaptiveInterval)
@@ -741,23 +781,52 @@ void MotionPath::drawFrames(CameraCache* cachePtr, const MMatrix &currentCameraM
         if (useScreenCache)
         {
             // A3: Use cached screen-space coordinates (80% faster)
-            MPoint currentScreenPos = frameScreenSpacePositions[timeToTick(i)];
-
-            if (GlobalSettings::showPath)
+            // FIX: 使用find()验证缓存命中，避免operator[]自动插入(0,0,0)导致路径延伸到屏幕外
+            auto it = frameScreenSpacePositions.find(timeToTick(i));
+            if (it == frameScreenSpacePositions.end())
             {
-                double factor = 1;
-                if (GlobalSettings::alternatingFrames)
-                    factor = int(i) % 2 == 1 ? 1.4 : 0.6;
+                // 缓存未命中 - 实时计算屏幕坐标
+                double screenX, screenY;
+                frameContext->worldToViewport(worldPos, screenX, screenY);
+                MPoint currentScreenPos(screenX, screenY, 0);
 
-                VP2DrawUtils::drawLine2dCached(previousScreenPos, currentScreenPos, static_cast<float>(GlobalSettings::pathSize), curveColor * factor, drawManager);
+                if (GlobalSettings::showPath)
+                {
+                    double factor = 1;
+                    if (GlobalSettings::alternatingFrames)
+                        factor = int(i) % 2 == 1 ? 1.4 : 0.6;
+
+                    VP2DrawUtils::drawLine2dCached(previousScreenPos, currentScreenPos, static_cast<float>(GlobalSettings::pathSize), curveColor * factor, drawManager);
+                }
+
+                VP2DrawUtils::drawPoint2dCached(previousScreenPos, static_cast<float>(GlobalSettings::pathSize * 2.0), curveColor, drawManager);
+                previousScreenPos = currentScreenPos;
+
+                if (i == displayEndTime)
+                {
+                    VP2DrawUtils::drawPoint2dCached(currentScreenPos, static_cast<float>(GlobalSettings::pathSize * 2.0), curveColor, drawManager);
+                }
             }
-
-            VP2DrawUtils::drawPoint2dCached(previousScreenPos, static_cast<float>(GlobalSettings::pathSize * 2.0), curveColor, drawManager);
-            previousScreenPos = currentScreenPos;
-
-            if (i == displayEndTime)
+            else
             {
-                VP2DrawUtils::drawPoint2dCached(currentScreenPos, static_cast<float>(GlobalSettings::pathSize * 2.0), curveColor, drawManager);
+                MPoint currentScreenPos = it->second;
+
+                if (GlobalSettings::showPath)
+                {
+                    double factor = 1;
+                    if (GlobalSettings::alternatingFrames)
+                        factor = int(i) % 2 == 1 ? 1.4 : 0.6;
+
+                    VP2DrawUtils::drawLine2dCached(previousScreenPos, currentScreenPos, static_cast<float>(GlobalSettings::pathSize), curveColor * factor, drawManager);
+                }
+
+                VP2DrawUtils::drawPoint2dCached(previousScreenPos, static_cast<float>(GlobalSettings::pathSize * 2.0), curveColor, drawManager);
+                previousScreenPos = currentScreenPos;
+
+                if (i == displayEndTime)
+                {
+                    VP2DrawUtils::drawPoint2dCached(currentScreenPos, static_cast<float>(GlobalSettings::pathSize * 2.0), curveColor, drawManager);
+                }
             }
         }
         else
@@ -1244,8 +1313,40 @@ void MotionPath::drawFrameLabels(M3dView &view, CameraCache* cachePtr, const MMa
 	if (GlobalSettings::showFrameNumbers)
 	{
 //		// Always show start and end frame numbers, then fill in between with interval
-		int frameInterval = GlobalSettings::drawFrameInterval;
+		int frameInterval = GlobalSettings::frameLabelInterval;  // 使用帧号标签专用间隔
 		if (frameInterval < 1) frameInterval = 1;
+
+		// FIX: 检测是否所有帧在同一位置（无动画时）
+		// 如果起始和结束位置相同，只显示当前帧号避免重叠
+		MVector startPos = multPosByParentMatrix(getPos(displayStartTime), pMatrixCache[timeToTick(displayStartTime)]);
+		MVector endPos = multPosByParentMatrix(getPos(displayEndTime), pMatrixCache[timeToTick(displayEndTime)]);
+		double posDistance = (endPos - startPos).length();
+		bool hasNoMotion = (posDistance < 0.001 && keyframesCache.empty());
+
+		// 如果没有运动且没有关键帧，只显示当前帧
+		if (hasNoMotion)
+		{
+			double currentTime = MAnimControl::currentTime().as(MTime::uiUnit());
+			if (currentTime >= displayStartTime && currentTime <= displayEndTime)
+			{
+				ensureParentAndPivotMatrixAtTime(currentTime);
+				MVector worldPos = multPosByParentMatrix(getPos(currentTime), pMatrixCache[timeToTick(currentTime)]);
+				if (GlobalSettings::motionPathDrawMode == GlobalSettings::kCameraSpace)
+				{
+					if (cachePtr) {
+						cachePtr->ensureMatricesAtTime(currentTime);
+						worldPos = MPoint(worldPos) * cachePtr->matrixCache[CameraCache::timeToTick(currentTime)] * currentCameraMatrix;
+					}
+				}
+				if (useScreenCache && frameScreenSpacePositions.count(timeToTick(currentTime))) {
+					VP2DrawUtils::drawFrameLabelCached(currentTime, frameScreenSpacePositions[timeToTick(currentTime)], GlobalSettings::frameLabelSize, frameLabelColor, drawManager);
+				} else {
+					VP2DrawUtils::drawFrameLabel(currentTime, worldPos, view, GlobalSettings::frameLabelSize, frameLabelColor, currentCameraMatrix, drawManager, frameContext);
+				}
+			}
+		}
+		else
+		{
 //
 //		// Draw start frame (if not a keyframe or not showing keyframe numbers)
 		bool skipStart = false;
@@ -1329,6 +1430,7 @@ void MotionPath::drawFrameLabels(M3dView &view, CameraCache* cachePtr, const MMa
 			}
 			}
 		}
+		} // end of else (hasNoMotion)
 	}
 }
 
@@ -1405,17 +1507,28 @@ void MotionPath::draw(M3dView &view, CameraCache* cachePtr, MHWRender::MUIDrawMa
     int oldKeyX, oldKeyY, oldKeyZ;
     bool xUpdated=false, yUpdated=false, zUpdated=false;
 
-    //Refreshing the parent matrix cache if we need to do so
+    // FIX #2 性能优化: Locked mode下的父矩阵缓存刷新
+    // 当worldMatrixChangedCallback被调用后，需要重新计算父矩阵
     if (GlobalSettings::lockedMode && GlobalSettings::lockedModeInteractive && getWorldSpaceCallbackCalled())
     {
-        if (QApplication::mouseButtons() != Qt::LeftButton)
+        bool isDragging = (QApplication::mouseButtons() == Qt::LeftButton);
+
+        // FIX #2: 优化策略 - 失效旧缓存，允许后续重建
+        // 无论是否在拖动，都需要清空旧缓存因为父矩阵已改变
+        // 但我们使用pMatrixCacheValid标记来触发智能重建
+        pMatrixCache.clear();
+        pMatrixCacheValid = false;
+        drawPositionCache.clear();
+        invalidateScreenSpaceCache();
+
+        if (!isDragging)
         {
-            // 优化A+D: 清空缓存并标记失效
-            // 后续的cacheParentMatrixRange会智能重建，只计算需要的帧范围
-            clearParentMatrixCache();
+            // 拖动结束后完整更新祖先节点的curve
             cacheParentMatrixRangeForWorldCallback(tempAncestorNode);
             setWorldSpaceCallbackCalled(false, MObject());
         }
+        // 拖动中不调用cacheParentMatrixRangeForWorldCallback
+        // 让后续的cacheParentMatrixRange按需构建，并利用自适应interval
     }
 
     // 🚀 优化B: 提前批量预计算 - 确保缓存覆盖绘制范围
@@ -1799,9 +1912,17 @@ void MotionPath::offsetWorldPosition(const MVector &offset, const double time, M
         curveZ.setValue(key->zKeyId, val + lOffset.z, change);
     }
 
-    // BUG #5 修复: 清空受影响关键帧的位置缓存（精确失效）
-    int64_t tick = timeToTick(time);
-    drawPositionCache.erase(tick);
+    // FIX #2: 移动关键帧后需要清除相邻帧的位置缓存
+    // 因为关键帧移动会影响前后的插值路径
+    double minBoundary = displayStartTime;
+    double maxBoundary = displayEndTime;
+    getBoundariesForTime(time, &minBoundary, &maxBoundary);
+
+    // 清除受影响范围内的位置缓存（包括前后相邻关键帧之间的所有帧）
+    for (double t = minBoundary; t <= maxBoundary; t += 1.0)
+    {
+        drawPositionCache.erase(timeToTick(t));
+    }
 
     // VP2 Performance: Invalidate screen-space cache when keyframes are modified
     invalidateScreenSpaceCache();
@@ -1931,9 +2052,21 @@ void MotionPath::setTangentWorldPosition(const MVector &position, const double t
     setTangentValue(localPosition.y, key->yKeyId, cy, tangentId, mtime, change);
     setTangentValue(localPosition.z, key->zKeyId, cz, tangentId, mtime, change);
 
-    // BUG #5 修复: 清空受影响关键帧的位置缓存（精确失效）
-    int64_t tick = timeToTick(time);
-    drawPositionCache.erase(tick);
+    // FIX #1: 切线编辑后需要清除临近帧的位置缓存
+    // 因为切线影响的是关键帧前后的插值路径
+    // 找到前后关键帧边界，清除该范围内所有帧的缓存
+    double minBoundary = displayStartTime;
+    double maxBoundary = displayEndTime;
+    getBoundariesForTime(time, &minBoundary, &maxBoundary);
+
+    // 清除受影响范围内的位置缓存
+    for (double t = minBoundary; t <= maxBoundary; t += 1.0)
+    {
+        drawPositionCache.erase(timeToTick(t));
+    }
+
+    // FIX #1: 同时失效屏幕空间缓存，让VP2重新绘制路径
+    invalidateScreenSpaceCache();
 }
 
 void MotionPath::setTangentValue(float value, int key, MFnAnimCurve& curve, Keyframe::Tangent tangentId, const MTime& time, MAnimCurveChange* change)
@@ -2599,9 +2732,13 @@ void MotionPath::pasteKeys(const double time, const bool offset)
     if (clipboard.isZWeighed())
         curveZ.setIsWeighted(true, mpManager.getAnimCurveChangePtr());
     
-    deleteKeyFramesBetweenTimes(time, time + clipboard.keyCopyAt(size - 1)->deltaTime, curveX, mpManager.getAnimCurveChangePtr());
-    deleteKeyFramesBetweenTimes(time, time + clipboard.keyCopyAt(size - 1)->deltaTime, curveY, mpManager.getAnimCurveChangePtr());
-    deleteKeyFramesBetweenTimes(time, time + clipboard.keyCopyAt(size - 1)->deltaTime, curveZ, mpManager.getAnimCurveChangePtr());
+    KeyCopy *lastKey = clipboard.keyCopyAt(size - 1);
+    if (lastKey)
+    {
+        deleteKeyFramesBetweenTimes(time, time + lastKey->deltaTime, curveX, mpManager.getAnimCurveChangePtr());
+        deleteKeyFramesBetweenTimes(time, time + lastKey->deltaTime, curveY, mpManager.getAnimCurveChangePtr());
+        deleteKeyFramesBetweenTimes(time, time + lastKey->deltaTime, curveZ, mpManager.getAnimCurveChangePtr());
+    }
     
     //creating keyframes
     //on boundary keys set keyframes and break tangents only if there is keyframes before the first key or after the last key
@@ -2620,7 +2757,11 @@ void MotionPath::pasteKeys(const double time, const bool offset)
             if (i == 0)
                 pos = offsetVec;
             else
-                pos = offsetVec + kc->worldPos - clipboard.keyCopyAt(0)->worldPos;
+            {
+                KeyCopy *firstKey = clipboard.keyCopyAt(0);
+                if (firstKey)
+                    pos = offsetVec + kc->worldPos - firstKey->worldPos;
+            }
         }
         
         pos = multPosByParentMatrix(pos, pMatrixCache[timeToTick(t)].inverse());

@@ -81,7 +81,11 @@ public:
     void setClipboardSize(int size){ keys.reserve(size); };
     void addKey(const KeyCopy &key){ keys.push_back(key); };
     int getSize(){ return static_cast<int>(keys.size()); };
-    KeyCopy *keyCopyAt(const int index){ return &keys[index]; };
+    KeyCopy *keyCopyAt(const int index){
+        if (index < 0 || index >= static_cast<int>(keys.size()))
+            return nullptr;
+        return &keys[index];
+    };
 
     void setXWeighted(bool value){ xWeighted = value; };
     void setYWeighted(bool value){ yWeighted = value; };

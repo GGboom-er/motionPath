@@ -37,6 +37,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cmath>
+#include <algorithm>
+#include <vector>
 
 class MotionPath
 {
@@ -202,6 +204,69 @@ class MotionPath
         bool hasFrameBuckets() const { return screenSpaceCacheValid && !frameScreenBuckets.empty(); }
         // Exposed helper to强制失效屏幕缓存（供交互层调用）
         void forceInvalidateScreenSpaceCache() { invalidateScreenSpaceCache(); }
+        // FIX: 轻量级屏幕缓存失效 - 编辑关键帧时使用，只清空屏幕坐标缓存
+        // 不清空drawPositionCache，因为编辑时只需要更新被编辑帧的位置
+        void invalidateScreenCacheOnly() {
+            screenSpaceCacheValid = false;
+            frameScreenSpacePositions.clear();
+            keyScreenBuckets.clear();
+            tangentScreenBuckets.clear();
+            frameScreenBuckets.clear();
+        }
+        // FIX: 失效特定帧的位置缓存（编辑关键帧时使用）
+        void invalidatePositionAtTime(double time) {
+            drawPositionCache.erase(timeToTick(time));
+        }
+        // FIX: 失效指定范围内的位置缓存（编辑关键帧时使用）
+        // 只清除[startTime, endTime]范围内的缓存，保留其他帧
+        void invalidatePositionRange(double startTime, double endTime) {
+            for (double t = std::floor(startTime); t <= std::ceil(endTime); t += 1.0) {
+                drawPositionCache.erase(timeToTick(t));
+            }
+        }
+        // FIX: 根据编辑的关键帧时间，计算并失效受影响的范围
+        // 返回受影响的范围 [outStart, outEnd]
+        void invalidateAffectedRange(double editedTime, double& outStart, double& outEnd) {
+            double prevKey = displayStartTime;
+            double nextKey = displayEndTime;
+            getBoundariesForTime(editedTime, &prevKey, &nextKey);
+            outStart = prevKey;
+            outEnd = nextKey;
+            invalidatePositionRange(prevKey, nextKey);
+        }
+        // FIX: 批量处理多个编辑的关键帧，合并重叠范围后失效
+        void invalidateAffectedRanges(const MDoubleArray& editedTimes) {
+            if (editedTimes.length() == 0) return;
+
+            // 收集所有受影响的范围
+            std::vector<std::pair<double, double>> ranges;
+            for (unsigned int i = 0; i < editedTimes.length(); i++) {
+                double prevKey = displayStartTime;
+                double nextKey = displayEndTime;
+                getBoundariesForTime(editedTimes[i], &prevKey, &nextKey);
+                ranges.push_back({prevKey, nextKey});
+            }
+
+            // 按起始时间排序
+            std::sort(ranges.begin(), ranges.end());
+
+            // 合并重叠范围并失效
+            double mergedStart = ranges[0].first;
+            double mergedEnd = ranges[0].second;
+            for (size_t i = 1; i < ranges.size(); i++) {
+                if (ranges[i].first <= mergedEnd) {
+                    // 范围重叠，合并
+                    mergedEnd = std::max(mergedEnd, ranges[i].second);
+                } else {
+                    // 不重叠，失效当前合并范围，开始新范围
+                    invalidatePositionRange(mergedStart, mergedEnd);
+                    mergedStart = ranges[i].first;
+                    mergedEnd = ranges[i].second;
+                }
+            }
+            // 失效最后一个合并范围
+            invalidatePositionRange(mergedStart, mergedEnd);
+        }
         int bucketX(double x) const { return static_cast<int>(std::floor(x / SCREEN_BUCKET_SIZE)); }
         int bucketY(double y) const { return static_cast<int>(std::floor(y / SCREEN_BUCKET_SIZE)); }
         static int64_t bucketKey(int bx, int by) {
